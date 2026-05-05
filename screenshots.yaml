@@ -1,0 +1,100 @@
+# Screenshot Builder — example configuration
+#
+# Two top-level sections:
+#   phones:  reusable phone definitions (base image + display corners)
+#   brands:  one section per brand; each brand picks a phone (or several)
+#            and supplies its own screenshots, labels, stamps.
+#
+# All file paths are relative to the assets/ folder.
+#
+# Recommended assets/ layout:
+#   assets/
+#     phones/        base images (hand+phone PNGs, transparent display)
+#     screenshots/<brand>/   plain app screenshots
+#     logos/<brand>/         stamp images
+#     fonts/                 optional .ttf/.otf
+
+# ----- Phones (reusable) --------------------------------------------------
+phones:
+
+  iphone15:
+    base_image: phones/iphone15.png
+    # The four corners of the phone's display area, in pixel coordinates
+    # of the base image. Order matters.
+    screen_corners:
+      top_left:     [310, 240]
+      top_right:    [930, 270]
+      bottom_right: [915, 1820]
+      bottom_left:  [295, 1790]
+
+  iphone15pro:
+    base_image: phones/iphone15pro.png
+    screen_corners:
+      top_left:     [320, 250]
+      top_right:    [940, 280]
+      bottom_right: [925, 1830]
+      bottom_left:  [305, 1800]
+
+# ----- Brands -------------------------------------------------------------
+brands:
+
+  AcmeInc:
+    # Pick ONE form:
+    phone: iphone15            # single phone (most common)
+    # phones: [iphone15, iphone15pro]   # matrix mode: render against each
+
+    # Optional: final canvas resize after compositing (App Store target size).
+    # output_size: [1242, 2688]
+
+    # Optional: background fill behind the warped screenshot. RGBA.
+    background_color: [255, 255, 255, 0]
+
+    # Optional post-processing (applied before output_size resize).
+    # Per-shot post_process overrides this brand-level block entirely.
+    post_process:
+      crop:
+        # Pick ONE form:
+        #   box:     [left, top, right, bottom]   # absolute pixel box
+        #   center:  [width, height]              # centered crop
+        margins: [0, 0, 0, 0]                     # trim N px from each edge
+      adjust:
+        brightness: 1.0    # 1.0 = unchanged
+        contrast:   1.05
+        saturation: 1.10
+        sharpness:  1.0
+        grayscale:  false
+
+    screenshots:
+      - source: screenshots/acme/home.png
+        output: 01_home.png
+        labels:
+          - text: "Catch more fish"
+            position: [621, 120]
+            font: fonts/Inter-Bold.ttf   # optional; falls back to system font
+            font_size: 84
+            color: "#0B2545"
+            shadow_color: "#00000055"
+            shadow_offset: [3, 3]
+            anchor: "mm"                 # Pillow text anchor (mm = centered)
+        stamps:
+          - source: logos/acme/logo.png
+            position: [40, 40]
+            scale: 0.5
+
+      - source: screenshots/acme/map.png
+        output: 02_map.png
+        labels:
+          - text: "Find spots near you"
+            position: [621, 120]
+            font_size: 84
+            color: "#FFFFFF"
+            shadow_color: "#000000AA"
+            shadow_offset: [2, 2]
+            anchor: "mm"
+
+  # Another brand reusing the SAME phone — just point at it.
+  Globex:
+    phone: iphone15
+    screenshots:
+      - source: screenshots/globex/dashboard.png
+        output: 01_dashboard.png

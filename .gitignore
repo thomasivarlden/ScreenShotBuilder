@@ -1,0 +1,29 @@
+# Screenshot Builder
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.Python
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Build output (generated screenshots)
+dist/
+
+# Input assets (brand-specific binaries — not part of the source repo)
+assets/
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+*.iml
+
+# Claude Code workspace
+.claude/
