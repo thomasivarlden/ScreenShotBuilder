@@ -1,0 +1,45 @@
+"""Round-trip YAML I/O for the GUI editor.
+
+Uses ruamel.yaml so saves preserve comments, key order, and quoting style.
+The process side (build pipeline) keeps using PyYAML safe_load — read only.
+"""
+from pathlib import Path
+from typing import Any
+
+from ruamel.yaml import YAML
+from ruamel.yaml.scalarint import ScalarInt
+
+
+def make_yaml() -> YAML:
+    y = YAML()
+    y.preserve_quotes = True
+    y.indent(mapping=2, sequence=4, offset=2)
+    y.width = 120
+    return y
+
+
+def load_round_trip(path: Path) -> Any:
+    y = make_yaml()
+    with path.open("r", encoding="utf-8") as fh:
+        return y.load(fh)
+
+
+def save_round_trip(path: Path, data: Any) -> None:
+    y = make_yaml()
+    with path.open("w", encoding="utf-8") as fh:
+        y.dump(data, fh)
+
+
+def update_phone_corners(
+    data: Any,
+    phone_name: str,
+    corners: dict[str, tuple[int, int]],
+) -> None:
+    """Replace screen_corners for the named phone, in-place on a round-trip doc."""
+    if "phones" not in data or phone_name not in data["phones"]:
+        raise KeyError(f"phone '{phone_name}' not found in YAML")
+    phone = data["phones"][phone_name]
+    sc = phone.setdefault("screen_corners", {})
+    for key in ("top_left", "top_right", "bottom_right", "bottom_left"):
+        x, y = corners[key]
+        sc[key] = [int(x), int(y)]

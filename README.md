@@ -26,16 +26,18 @@ composites optional stamps (logos) and text labels (with shadow) on top.
   grayscale) — at brand level or overridden per screenshot.
 - Optional final resize per brand to a target output size.
 - Per-brand subfolder under `dist/`, PNG output.
-- Self-bootstrapping launcher (`start.sh`) that checks prerequisites, creates
+- Self-bootstrapping launcher (`process.sh`) that checks prerequisites, creates
   a `.venv` and installs dependencies on first run.
 
 ## Project layout
 
 ```
-screenshot_builder.py     CLI entrypoint
+screenshot_builder.py     batch processor (CLI entrypoint)
+editor.py                 GUI corner editor (Tk)
 screenshots.yaml          default config (example)
-start.sh                  prerequisite checks + venv + run
-requirements.txt          Pillow, PyYAML, numpy
+process.sh                launcher for the batch processor
+editor.sh                 launcher for the GUI editor
+requirements.txt          Pillow, PyYAML, numpy, ruamel.yaml
 include/
   version.py              app name / version / copyright
   logger.py               timestamped progress logger
@@ -43,6 +45,8 @@ include/
   perspective.py          4-corner perspective warp
   postprocess.py          final crop + color adjustments
   compositor.py           base + screenshot + stamps + labels
+  yaml_io.py              round-trip YAML I/O for the editor (preserves comments)
+  corner_editor.py        Tk canvas widget with draggable corner handles
   builder.py              batch driver across brands
 assets/                   inputs (gitignored — your own art)
   phones/                 base images (hand+phone, transparent display)
@@ -78,9 +82,9 @@ relative to `assets/` (e.g. `phones/hand_phone.png`, `logos/acme/logo.png`).
 #    of your base image.
 
 # 3. Run.
-./start.sh                       # uses screenshots.yaml
-./start.sh -c brand-x.yaml -v    # custom config, verbose
-./start.sh --version
+./process.sh                       # uses screenshots.yaml
+./process.sh -c brand-x.yaml -v    # custom config, verbose
+./process.sh --version
 ```
 
 Outputs land in `dist/<BrandName>/<output>.png`.
@@ -97,7 +101,39 @@ screenshot_builder.py [-c CONFIG] [-a ASSETS] [-o OUT] [-v] [--version]
   --version      Print version banner and exit
 ```
 
-`start.sh` forwards any flags through to the Python entrypoint.
+`process.sh` forwards any flags through to the Python entrypoint.
+
+## GUI editor (`editor.sh`)
+
+Calibrating `screen_corners` by hand is fiddly. The GUI editor opens the
+phone's base image on a canvas, lets you drag the four corners as a dashed
+quad, and saves them back to the YAML — preserving comments and order.
+
+```bash
+./editor.sh                        # uses screenshots.yaml
+./editor.sh -c custom.yaml         # alternate config
+```
+
+What you can do in the editor:
+
+- Pick a phone from the dropdown (lists every entry under `phones:`).
+- Drag the four red handles. Coordinate readout updates live in the status bar.
+- Optional: **Load screenshot…** previews any PNG/JPEG warped behind the
+  base image so you can see exactly what the final composite will look like
+  while you tune the corners. The preview re-renders on mouse-release.
+- **Reset corners** drops the four handles to a 15% inset of the image —
+  handy starting point for a fresh phone.
+- **Save** writes back to `screenshots.yaml` (round-trip via `ruamel.yaml`,
+  so existing comments and key order are preserved).
+
+Tkinter prerequisite (one-time):
+
+- macOS (Homebrew Python): `brew install python-tk@3.X` (matching your version)
+- Ubuntu/Debian: `sudo apt install python3-tk`
+- macOS system Python and python.org installers ship with Tk by default.
+
+The launcher checks for Tkinter on startup and prints the right install
+hint if it's missing.
 
 ## YAML format
 
