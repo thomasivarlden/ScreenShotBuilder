@@ -40,8 +40,14 @@ class EditorApp:
             return
 
         self._build_ui()
-        # Auto-select first phone
+        # Prefer the first phone whose base_image exists locally,
+        # otherwise fall back to the first defined phone.
         first = next(iter(self.data["phones"]))
+        for name, cfg in self.data["phones"].items():
+            base = (self.assets_dir / str(cfg.get("base_image", ""))).resolve()
+            if base.is_file():
+                first = name
+                break
         self.phone_var.set(first)
         self._on_phone_change()
 
@@ -102,7 +108,10 @@ class EditorApp:
         base_rel = str(phone["base_image"])
         base_path = (self.assets_dir / base_rel).resolve()
         if not base_path.is_file():
-            messagebox.showerror("Missing file", f"Base image not found:\n{base_path}")
+            self.canvas.delete("all")
+            self.status_var.set(
+                f"⚠  Base image not found for '{name}': {base_path}"
+            )
             return
         sc = phone.get("screen_corners", {}) or {}
         try:
