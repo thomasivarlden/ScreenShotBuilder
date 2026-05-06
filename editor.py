@@ -101,7 +101,10 @@ class EditorApp:
         canvas_frame.rowconfigure(0, weight=1)
         canvas_frame.columnconfigure(0, weight=1)
 
-        self.canvas = tk.Canvas(canvas_frame, bg="#1f1f23", highlightthickness=0)
+        self.canvas = tk.Canvas(
+            canvas_frame, bg="#1f1f23", highlightthickness=0,
+            xscrollincrement=1, yscrollincrement=1,  # 1 unit = 1 pixel
+        )
         vbar = ttk.Scrollbar(canvas_frame, orient="vertical", command=self.canvas.yview)
         hbar = ttk.Scrollbar(canvas_frame, orient="horizontal", command=self.canvas.xview)
         self.canvas.config(xscrollcommand=hbar.set, yscrollcommand=vbar.set)
@@ -120,12 +123,34 @@ class EditorApp:
         self.canvas.bind("<MouseWheel>", self._on_wheel)            # macOS / Windows
         self.canvas.bind("<Button-4>", lambda e: self._wheel_zoom(1, e))   # Linux up
         self.canvas.bind("<Button-5>", lambda e: self._wheel_zoom(-1, e))  # Linux down
+        # Shift + wheel = horizontal scroll (standard convention)
+        self.canvas.bind("<Shift-MouseWheel>", self._on_shift_wheel)
         for seq in ("<Command-equal>", "<Command-plus>", "<Control-equal>", "<Control-plus>"):
             self.root.bind(seq, lambda _e: self._zoom_in())
         for seq in ("<Command-minus>", "<Control-minus>"):
             self.root.bind(seq, lambda _e: self._zoom_out())
         for seq in ("<Command-0>", "<Control-0>"):
             self.root.bind(seq, lambda _e: self._zoom_reset())
+
+        # Panning:
+        #   space + drag (Photoshop/Figma convention),
+        #   middle-mouse drag,
+        #   arrow keys (40 px, or 5 px with Shift)
+        self.root.bind("<KeyPress-space>", self._space_press)
+        self.root.bind("<KeyRelease-space>", self._space_release)
+        self.canvas.bind("<ButtonPress-2>", self._mid_press)
+        self.canvas.bind("<B2-Motion>", self._mid_drag)
+        self.canvas.bind("<ButtonRelease-2>", self._mid_release)
+        self.canvas.bind("<ButtonPress-3>", self._mid_press)   # macOS sometimes maps wheel-click here
+        self.canvas.bind("<B3-Motion>", self._mid_drag)
+        self.canvas.bind("<ButtonRelease-3>", self._mid_release)
+        for seq, dx, dy in (
+            ("<Left>",  -40, 0), ("<Right>",  40, 0),
+            ("<Up>",    0, -40), ("<Down>",   0, 40),
+            ("<Shift-Left>",  -5, 0), ("<Shift-Right>",  5, 0),
+            ("<Shift-Up>",    0, -5), ("<Shift-Down>",   0, 5),
+        ):
+            self.root.bind(seq, lambda _e, dx=dx, dy=dy: self._pan_pixels(dx, dy))
 
         # Title bar dirty indicator
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -197,6 +222,48 @@ class EditorApp:
 
     def _on_zoom_change(self, scale: float) -> None:
         self.zoom_var.set(f"{scale * 100:.0f}%")
+
+    # ---------- panning --------------------------------------------------
+
+    def _space_press(self, _event: tk.Event) -> None:
+        # Don't hijack space if a text widget has focus.
+        focus = self.root.focus_get()
+        if isinstance(focus, (tk.Entry, tk.Text)):
+            return
+        if not self.editor.pan_mode:
+            self.editor.pan_mode = True
+            self.canvas.config(cursor="fleur")
+
+    def _space_release(self, _event: tk.Event) -> None:
+        if self.editor.pan_mode:
+            self.editor.pan_mode = False
+            self.canvas.config(cursor="")
+
+    def _mid_press(self, event: tk.Event) -> None:
+        self.canvas.scan_mark(event.x, event.y)
+        self.canvas.config(cursor="fleur")
+
+    def _mid_drag(self, event: tk.Event) -> None:
+        self.canvas.scan_dragto(event.x, event.y, gain=1)
+
+    def _mid_release(self, _event: tk.Event) -> None:
+        # Restore cursor only if spacebar isn't currently held.
+        if not self.editor.pan_mode:
+            self.canvas.config(cursor="")
+
+    def _on_shift_wheel(self, event: tk.Event) -> None:
+        direction = 1 if event.delta > 0 else -1
+        self.canvas.xview_scroll(-direction * 3, "units")
+
+    def _pan_pixels(self, dx: int, dy: int) -> None:
+        # Don't intercept arrow keys when a text/entry has focus.
+        focus = self.root.focus_get()
+        if isinstance(focus, (tk.Entry, tk.Text)):
+            return
+        if dx:
+            self.canvas.xview_scroll(dx, "units")
+        if dy:
+            self.canvas.yview_scroll(dy, "units")
 
     def _on_corner_change(self, corners) -> None:
         self._set_dirty(True)

@@ -53,6 +53,11 @@ class CornerEditor:
         # Corners in IMAGE pixel coords (not canvas coords).
         self._corners: Dict[str, Tuple[int, int]] = {}
         self._dragging: str | None = None
+        # Pan mode is toggled by the host (e.g. while spacebar is held);
+        # in pan mode the left mouse button drags the viewport instead of
+        # grabbing a corner handle.
+        self.pan_mode: bool = False
+        self._panning: bool = False
 
         canvas.bind("<Button-1>", self._on_press)
         canvas.bind("<B1-Motion>", self._on_drag)
@@ -244,11 +249,18 @@ class CornerEditor:
     # ---------- mouse events --------------------------------------------
 
     def _on_press(self, event: tk.Event) -> None:
+        if self.pan_mode:
+            self.canvas.scan_mark(event.x, event.y)
+            self._panning = True
+            return
         cx = self.canvas.canvasx(event.x)
         cy = self.canvas.canvasy(event.y)
         self._dragging = self._hit_test(cx, cy)
 
     def _on_drag(self, event: tk.Event) -> None:
+        if self._panning:
+            self.canvas.scan_dragto(event.x, event.y, gain=1)
+            return
         if self._dragging is None or self._base_pil is None:
             return
         bw, bh = self._base_pil.size
@@ -280,6 +292,9 @@ class CornerEditor:
         self._notify()
 
     def _on_release(self, _event: tk.Event) -> None:
+        if self._panning:
+            self._panning = False
+            return
         if self._dragging is not None:
             self._dragging = None
             # Full redraw: re-warps screenshot preview if loaded.

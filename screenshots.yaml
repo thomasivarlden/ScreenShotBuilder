@@ -42,22 +42,16 @@ phones:
     screen_corners:
       top_left:
         - 522
-        - 236
+        - 239
       top_right:
-        - 805
-        - 250
+        - 803
+        - 251
       bottom_right:
-        - 780
-        - 870
+        - 784
+        - 866
       bottom_left:
         - 492
         - 854
-
-# ----- Brands -------------------------------------------------------------
-# The AcmeInc and Globex blocks below are documentation-only examples that
-# reference phones (iphone15) and assets you don't have locally — they're
-# left commented-out so the example file shows the full schema without
-# breaking a real run.
 brands:
 
   # AcmeInc:
