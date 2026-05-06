@@ -159,16 +159,16 @@ brands:
   # Quick local test against assets/phones/phone.png.
   # Drop a PNG at assets/screenshots/test/sample.png and run ./start.sh
   TestBrand:
-    phone: test_phone
+    phone: b3
     background_color: [240, 240, 240, 255]
     screenshots:
       - source: screenshots/IMG_3677.PNG
         output: 01_test.png
         labels:
           - text: "Hello, world!"
-            position: [724, 60]
-            font_size: 48
+            position: [3620, 300]   # scaled ~5x from the 1448-wide test canvas
+            font_size: 240
             color: "#0B2545"
             shadow_color: "#00000055"
-            shadow_offset: [2, 2]
+            shadow_offset: [10, 10]
             anchor: "mm"
