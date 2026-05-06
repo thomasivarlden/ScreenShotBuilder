@@ -22,28 +22,36 @@ phones:
     # The four corners of the phone's display area, in pixel coordinates
     # of the base image. Order matters.
     screen_corners:
-      top_left:     [310, 240]
-      top_right:    [930, 270]
+      top_left: [310, 240]
+      top_right: [930, 270]
       bottom_right: [915, 1820]
-      bottom_left:  [295, 1790]
+      bottom_left: [295, 1790]
 
   iphone15pro:
     base_image: phones/iphone15pro.png
     screen_corners:
-      top_left:     [320, 250]
-      top_right:    [940, 280]
+      top_left: [320, 250]
+      top_right: [940, 280]
       bottom_right: [925, 1830]
-      bottom_left:  [305, 1800]
+      bottom_left: [305, 1800]
 
   # Local test phone — uses assets/phones/phone.png (1448 x 1086).
   # Display-area corners (clockwise from top-left).
   test_phone:
     base_image: phones/phone.png
     screen_corners:
-      top_left:     [520, 230]
-      top_right:    [805, 250]
-      bottom_right: [780, 886]
-      bottom_left:  [500, 838]
+      top_left:
+        - 522
+        - 236
+      top_right:
+        - 805
+        - 250
+      bottom_right:
+        - 780
+        - 870
+      bottom_left:
+        - 492
+        - 854
 
 # ----- Brands -------------------------------------------------------------
 # The AcmeInc and Globex blocks below are documentation-only examples that

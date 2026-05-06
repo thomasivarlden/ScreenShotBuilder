@@ -123,6 +123,10 @@ What you can do in the editor:
   while you tune the corners. The preview re-renders on mouse-release.
 - **Reset corners** drops the four handles to a 15% inset of the image —
   handy starting point for a fresh phone.
+- **Zoom**: `+` / `−` / `Fit` buttons in the toolbar, mouse wheel
+  (zooms toward the cursor), and `Cmd/Ctrl +`, `Cmd/Ctrl −`, `Cmd/Ctrl 0`
+  shortcuts. The zoom percentage is shown in the toolbar. When zoomed in
+  beyond the viewport, scrollbars appear so you can pan around.
 - **Save** writes back to `screenshots.yaml` (round-trip via `ruamel.yaml`,
   so existing comments and key order are preserved).
 

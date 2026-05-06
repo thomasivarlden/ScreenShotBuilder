@@ -29,13 +29,20 @@ class CornerEditor:
         self,
         canvas: tk.Canvas,
         on_change: Callable[[Dict[str, Tuple[int, int]]], None] | None = None,
+        on_zoom_change: Callable[[float], None] | None = None,
     ):
         self.canvas = canvas
         self.on_change = on_change
+        self.on_zoom_change = on_zoom_change
 
         self._base_pil: Image.Image | None = None
         self._screenshot_pil: Image.Image | None = None
         self._composite_tk: ImageTk.PhotoImage | None = None
+
+        # Zoom: when _fit_mode is True, the image auto-fits the canvas.
+        # Otherwise _user_zoom is the absolute scale factor (1.0 = 100%).
+        self._fit_mode: bool = True
+        self._user_zoom: float = 1.0
 
         self._scale: float = 1.0
         self._image_id: int | None = None
@@ -68,6 +75,58 @@ class CornerEditor:
     def get_corners(self) -> Dict[str, Tuple[int, int]]:
         return {k: (int(v[0]), int(v[1])) for k, v in self._corners.items()}
 
+    # ---------- zoom -----------------------------------------------------
+
+    def get_zoom(self) -> float:
+        """Effective scale factor (1.0 = 100%)."""
+        return self._scale
+
+    def zoom_in(self) -> None:
+        self._set_zoom(self._scale * 1.25)
+
+    def zoom_out(self) -> None:
+        self._set_zoom(self._scale / 1.25)
+
+    def zoom_reset(self) -> None:
+        self._fit_mode = True
+        self._redraw()
+        self._fire_zoom()
+
+    def _set_zoom(self, scale: float) -> None:
+        scale = max(0.05, min(scale, 16.0))
+        self._fit_mode = False
+        self._user_zoom = scale
+        self._redraw()
+        self._fire_zoom()
+
+    def _fire_zoom(self) -> None:
+        if self.on_zoom_change is not None:
+            self.on_zoom_change(self._scale)
+
+    def zoom_at_cursor(self, factor: float, view_x: float, view_y: float) -> None:
+        """Zoom by `factor` keeping the image point under the cursor stationary."""
+        if self._base_pil is None:
+            return
+        # Image coord under cursor before zoom
+        cx = self.canvas.canvasx(view_x)
+        cy = self.canvas.canvasy(view_y)
+        ix, iy = self._canvas_to_img(cx, cy)
+        new_scale = max(0.05, min(self._scale * factor, 16.0))
+        self._fit_mode = False
+        self._user_zoom = new_scale
+        self._redraw()
+        # After redraw, scroll so (ix, iy) sits under the same view point.
+        new_cx = ix * self._scale
+        new_cy = iy * self._scale
+        bw, bh = self._base_pil.size
+        sw = max(1, int(bw * self._scale))
+        sh = max(1, int(bh * self._scale))
+        target_x = new_cx - view_x
+        target_y = new_cy - view_y
+        self.canvas.xview_moveto(max(0.0, min(1.0, target_x / sw)))
+        self.canvas.yview_moveto(max(0.0, min(1.0, target_y / sh)))
+        self._fire_zoom()
+
     def reset_corners_to_image_bounds(self) -> None:
         if self._base_pil is None:
             return
@@ -97,10 +156,12 @@ class CornerEditor:
     def _compute_scale(self) -> float:
         if self._base_pil is None:
             return 1.0
-        cw = max(self.canvas.winfo_width(), 1)
-        ch = max(self.canvas.winfo_height(), 1)
-        bw, bh = self._base_pil.size
-        return min(cw / bw, ch / bh, 1.0)  # never upscale
+        if self._fit_mode:
+            cw = max(self.canvas.winfo_width(), 1)
+            ch = max(self.canvas.winfo_height(), 1)
+            bw, bh = self._base_pil.size
+            return min(cw / bw, ch / bh, 1.0)  # fit, never upscale beyond 1:1
+        return self._user_zoom
 
     def _build_composite(self) -> Image.Image | None:
         if self._base_pil is None:
@@ -139,6 +200,8 @@ class CornerEditor:
         self._image_id = self.canvas.create_image(
             0, 0, anchor="nw", image=self._composite_tk
         )
+        # Allow the canvas to scroll the full scaled image when zoomed in.
+        self.canvas.config(scrollregion=(0, 0, disp_w, disp_h))
 
         # Dashed quad
         pts = [self._img_to_canvas(*self._corners[k]) for k in CORNER_KEYS]
@@ -167,6 +230,10 @@ class CornerEditor:
                 font=("Helvetica", 10, "bold"),
             )
 
+        # Notify listeners about the now-current effective zoom (for fit mode
+        # this changes whenever the canvas is resized).
+        self._fire_zoom()
+
     def _hit_test(self, x: float, y: float) -> str | None:
         for key, hid in self._handle_ids.items():
             x1, y1, x2, y2 = self.canvas.coords(hid)
@@ -177,13 +244,17 @@ class CornerEditor:
     # ---------- mouse events --------------------------------------------
 
     def _on_press(self, event: tk.Event) -> None:
-        self._dragging = self._hit_test(event.x, event.y)
+        cx = self.canvas.canvasx(event.x)
+        cy = self.canvas.canvasy(event.y)
+        self._dragging = self._hit_test(cx, cy)
 
     def _on_drag(self, event: tk.Event) -> None:
         if self._dragging is None or self._base_pil is None:
             return
         bw, bh = self._base_pil.size
-        ix, iy = self._canvas_to_img(event.x, event.y)
+        cx = self.canvas.canvasx(event.x)
+        cy = self.canvas.canvasy(event.y)
+        ix, iy = self._canvas_to_img(cx, cy)
         ix = max(0, min(bw, ix))
         iy = max(0, min(bh, iy))
         self._corners[self._dragging] = (ix, iy)

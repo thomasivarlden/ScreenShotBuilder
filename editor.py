@@ -77,6 +77,17 @@ class EditorApp:
         ttk.Button(toolbar, text="Reset corners", command=self._reset_corners)\
             .pack(side="left", padx=4)
 
+        ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=8)
+        ttk.Button(toolbar, text="−", width=3, command=self._zoom_out)\
+            .pack(side="left", padx=2)
+        ttk.Button(toolbar, text="+", width=3, command=self._zoom_in)\
+            .pack(side="left", padx=2)
+        ttk.Button(toolbar, text="Fit", command=self._zoom_reset)\
+            .pack(side="left", padx=4)
+        self.zoom_var = tk.StringVar(value="—")
+        ttk.Label(toolbar, textvariable=self.zoom_var, width=8, anchor="center")\
+            .pack(side="left", padx=4)
+
         ttk.Button(toolbar, text="Save", command=self._save).pack(side="right", padx=4)
 
         # Status bar with live coordinates
@@ -84,13 +95,37 @@ class EditorApp:
         status = ttk.Label(self.root, textvariable=self.status_var, padding=6, anchor="w")
         status.pack(side="bottom", fill="x")
 
-        # Canvas
+        # Canvas (wrapped with scrollbars for when the user zooms past viewport)
         canvas_frame = ttk.Frame(self.root)
         canvas_frame.pack(side="top", fill="both", expand=True)
-        self.canvas = tk.Canvas(canvas_frame, bg="#1f1f23", highlightthickness=0)
-        self.canvas.pack(fill="both", expand=True)
+        canvas_frame.rowconfigure(0, weight=1)
+        canvas_frame.columnconfigure(0, weight=1)
 
-        self.editor = CornerEditor(self.canvas, on_change=self._on_corner_change)
+        self.canvas = tk.Canvas(canvas_frame, bg="#1f1f23", highlightthickness=0)
+        vbar = ttk.Scrollbar(canvas_frame, orient="vertical", command=self.canvas.yview)
+        hbar = ttk.Scrollbar(canvas_frame, orient="horizontal", command=self.canvas.xview)
+        self.canvas.config(xscrollcommand=hbar.set, yscrollcommand=vbar.set)
+
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        vbar.grid(row=0, column=1, sticky="ns")
+        hbar.grid(row=1, column=0, sticky="ew")
+
+        self.editor = CornerEditor(
+            self.canvas,
+            on_change=self._on_corner_change,
+            on_zoom_change=self._on_zoom_change,
+        )
+
+        # Zoom shortcuts and mouse wheel
+        self.canvas.bind("<MouseWheel>", self._on_wheel)            # macOS / Windows
+        self.canvas.bind("<Button-4>", lambda e: self._wheel_zoom(1, e))   # Linux up
+        self.canvas.bind("<Button-5>", lambda e: self._wheel_zoom(-1, e))  # Linux down
+        for seq in ("<Command-equal>", "<Command-plus>", "<Control-equal>", "<Control-plus>"):
+            self.root.bind(seq, lambda _e: self._zoom_in())
+        for seq in ("<Command-minus>", "<Control-minus>"):
+            self.root.bind(seq, lambda _e: self._zoom_out())
+        for seq in ("<Command-0>", "<Control-0>"):
+            self.root.bind(seq, lambda _e: self._zoom_reset())
 
         # Title bar dirty indicator
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -141,6 +176,27 @@ class EditorApp:
     def _reset_corners(self) -> None:
         self.editor.reset_corners_to_image_bounds()
         self._set_dirty(True)
+
+    def _zoom_in(self) -> None:
+        self.editor.zoom_in()
+
+    def _zoom_out(self) -> None:
+        self.editor.zoom_out()
+
+    def _zoom_reset(self) -> None:
+        self.editor.zoom_reset()
+
+    def _on_wheel(self, event: tk.Event) -> None:
+        # macOS reports small deltas (e.g. ±1..±5); Windows reports ±120 per notch.
+        direction = 1 if event.delta > 0 else -1
+        self._wheel_zoom(direction, event)
+
+    def _wheel_zoom(self, direction: int, event: tk.Event) -> None:
+        factor = 1.15 if direction > 0 else 1 / 1.15
+        self.editor.zoom_at_cursor(factor, event.x, event.y)
+
+    def _on_zoom_change(self, scale: float) -> None:
+        self.zoom_var.set(f"{scale * 100:.0f}%")
 
     def _on_corner_change(self, corners) -> None:
         self._set_dirty(True)
