@@ -127,8 +127,10 @@ What you can do in the editor:
   (zooms toward the cursor), and `Cmd/Ctrl +`, `Cmd/Ctrl −`, `Cmd/Ctrl 0`
   shortcuts. The zoom percentage is shown in the toolbar.
 - **Pan** when zoomed in:
-  - **Spacebar + left-drag** (Photoshop/Figma convention) — cursor turns
-    into a hand while space is held.
+  - **Click and drag the image** (anywhere outside a corner handle).
+    Cursor is a hand over the image and a pointing finger over a handle,
+    so the affordance is visible before you click.
+  - **Spacebar + left-drag** forces pan mode even directly on a handle.
   - **Middle-mouse drag**.
   - **Arrow keys** for fine nudging (40 px, or 5 px with Shift).
   - **Shift + mouse wheel** for horizontal scroll.

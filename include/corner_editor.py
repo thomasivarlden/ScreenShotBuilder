@@ -62,6 +62,8 @@ class CornerEditor:
         canvas.bind("<Button-1>", self._on_press)
         canvas.bind("<B1-Motion>", self._on_drag)
         canvas.bind("<ButtonRelease-1>", self._on_release)
+        canvas.bind("<Motion>", self._on_motion)
+        canvas.bind("<Leave>", lambda _e: canvas.config(cursor=""))
         canvas.bind("<Configure>", lambda _e: self._redraw())
 
     # ---------- public API ------------------------------------------------
@@ -252,10 +254,20 @@ class CornerEditor:
         if self.pan_mode:
             self.canvas.scan_mark(event.x, event.y)
             self._panning = True
+            self.canvas.config(cursor="fleur")
             return
         cx = self.canvas.canvasx(event.x)
         cy = self.canvas.canvasy(event.y)
-        self._dragging = self._hit_test(cx, cy)
+        hit = self._hit_test(cx, cy)
+        if hit is not None:
+            # Grabbed a corner handle — start dragging it.
+            self._dragging = hit
+            self.canvas.config(cursor="hand2")
+            return
+        # Clicked empty image area: start panning. Cursor goes to "closed hand".
+        self.canvas.scan_mark(event.x, event.y)
+        self._panning = True
+        self.canvas.config(cursor="fleur")
 
     def _on_drag(self, event: tk.Event) -> None:
         if self._panning:
@@ -291,15 +303,38 @@ class CornerEditor:
             self.canvas.coords(line_id, ax, ay, bx, by)
         self._notify()
 
-    def _on_release(self, _event: tk.Event) -> None:
+    def _on_release(self, event: tk.Event) -> None:
         if self._panning:
             self._panning = False
+            # Restore hover cursor based on where the pointer is now.
+            self._update_hover_cursor(event.x, event.y)
             return
         if self._dragging is not None:
             self._dragging = None
             # Full redraw: re-warps screenshot preview if loaded.
             self._redraw()
             self._notify()
+            self._update_hover_cursor(event.x, event.y)
+
+    def _on_motion(self, event: tk.Event) -> None:
+        # Skip while a button is held — those have their own cursor states.
+        if self._dragging is not None or self._panning:
+            return
+        self._update_hover_cursor(event.x, event.y)
+
+    def _update_hover_cursor(self, view_x: int, view_y: int) -> None:
+        if self._base_pil is None:
+            self.canvas.config(cursor="")
+            return
+        if self.pan_mode:
+            self.canvas.config(cursor="fleur")
+            return
+        cx = self.canvas.canvasx(view_x)
+        cy = self.canvas.canvasy(view_y)
+        if self._hit_test(cx, cy) is not None:
+            self.canvas.config(cursor="hand2")
+        else:
+            self.canvas.config(cursor="fleur")
 
     def _notify(self) -> None:
         if self.on_change is not None:
