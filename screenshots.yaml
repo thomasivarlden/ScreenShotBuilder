@@ -15,43 +15,107 @@
 #     fonts/                 optional .ttf/.otf
 
 # ----- Phones (reusable) --------------------------------------------------
+# Corners are pixel coordinates of the base image (clockwise from top-left).
+# All entries below except `test_phone` start with placeholder corners
+# (5x-scaled from test_phone). Open each in editor.sh and refine per phone.
 phones:
 
-  iphone15:
-    base_image: phones/iphone15.png
-    # The four corners of the phone's display area, in pixel coordinates
-    # of the base image. Order matters.
-    screen_corners:
-      top_left: [310, 240]
-      top_right: [930, 270]
-      bottom_right: [915, 1820]
-      bottom_left: [295, 1790]
-
-  iphone15pro:
-    base_image: phones/iphone15pro.png
-    screen_corners:
-      top_left: [320, 250]
-      top_right: [940, 280]
-      bottom_right: [925, 1830]
-      bottom_left: [305, 1800]
-
-  # Local test phone — uses assets/phones/phone.png (1448 x 1086).
-  # Display-area corners (clockwise from top-left).
   test_phone:
+    # Small preview render of one of the b* phones (1448 x 1086).
     base_image: phones/phone.png
     screen_corners:
+      top_left: [522, 239]
+      top_right: [803, 251]
+      bottom_right: [784, 866]
+      bottom_left: [492, 854]
+
+  a1:
+    base_image: phones/a1.png   # 7240 x 5430
+    screen_corners:
       top_left:
-        - 522
-        - 239
+        - 2288
+        - 767
       top_right:
-        - 803
-        - 251
+        - 4072
+        - 855
       bottom_right:
-        - 784
-        - 866
+        - 3676
+        - 4712
       bottom_left:
-        - 492
-        - 854
+        - 1946
+        - 4480
+
+  a2:
+    base_image: phones/a2.png
+    screen_corners:
+      top_left: [2610, 1195]
+      top_right: [4015, 1255]
+      bottom_right: [3920, 4330]
+      bottom_left: [2460, 4270]
+
+  b1:
+    base_image: phones/b1.png
+    screen_corners:
+      top_left: [2610, 1195]
+      top_right: [4015, 1255]
+      bottom_right: [3920, 4330]
+      bottom_left: [2460, 4270]
+
+  b2:
+    base_image: phones/b2.png
+    screen_corners:
+      top_left: [2610, 1195]
+      top_right: [4015, 1255]
+      bottom_right: [3920, 4330]
+      bottom_left: [2460, 4270]
+
+  b3:
+    base_image: phones/b3.png
+    screen_corners:
+      top_left:
+        - 2607
+        - 1110
+      top_right:
+        - 4042
+        - 1287
+      bottom_right:
+        - 3780
+        - 4468
+      bottom_left:
+        - 2244
+        - 4327
+
+  b4:
+    base_image: phones/b4.png
+    screen_corners:
+      top_left: [2610, 1195]
+      top_right: [4015, 1255]
+      bottom_right: [3920, 4330]
+      bottom_left: [2460, 4270]
+
+  b5:
+    base_image: phones/b5.png
+    screen_corners:
+      top_left: [2610, 1195]
+      top_right: [4015, 1255]
+      bottom_right: [3920, 4330]
+      bottom_left: [2460, 4270]
+
+  b6:
+    base_image: phones/b6.png
+    screen_corners:
+      top_left: [2610, 1195]
+      top_right: [4015, 1255]
+      bottom_right: [3920, 4330]
+      bottom_left: [2460, 4270]
+
+  b7:
+    base_image: phones/b7.png
+    screen_corners:
+      top_left: [2610, 1195]
+      top_right: [4015, 1255]
+      bottom_right: [3920, 4330]
+      bottom_left: [2460, 4270]
 brands:
 
   # AcmeInc:

@@ -6,11 +6,14 @@
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 import tkinter as tk
+import webbrowser
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+from include.compositor import build_composite
 from include.corner_editor import CORNER_KEYS, CornerEditor
 from include.version import APP_NAME, APP_VERSION, banner
 from include.yaml_io import load_round_trip, save_round_trip, update_phone_corners
@@ -24,7 +27,9 @@ class EditorApp:
         self.root = root
         self.config_path = config_path
         self.assets_dir = assets_dir
+        self.dist_dir = (config_path.parent / "dist").resolve()
         self._dirty = False
+        self._screenshot_path: Path | None = None
 
         root.title(f"{APP_NAME} — Corner Editor v{APP_VERSION}")
         root.geometry("1280x900")
@@ -76,6 +81,12 @@ class EditorApp:
             .pack(side="left", padx=4)
         ttk.Button(toolbar, text="Reset corners", command=self._reset_corners)\
             .pack(side="left", padx=4)
+
+        ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=8)
+        self.preview_btn = ttk.Button(
+            toolbar, text="Render preview", command=self._render_preview, state="disabled",
+        )
+        self.preview_btn.pack(side="left", padx=4)
 
         ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=8)
         ttk.Button(toolbar, text="−", width=3, command=self._zoom_out)\
@@ -184,6 +195,7 @@ class EditorApp:
             self.editor.reset_corners_to_image_bounds()
         self._set_dirty(False)
         self._update_status()
+        self._update_preview_button_state()
 
     def _load_screenshot(self) -> None:
         start = self.assets_dir / "screenshots"
@@ -193,10 +205,18 @@ class EditorApp:
             filetypes=[("PNG / JPEG", "*.png *.PNG *.jpg *.jpeg"), ("All files", "*.*")],
         )
         if path:
-            self.editor.load_screenshot(Path(path))
+            self._screenshot_path = Path(path)
+            self.editor.load_screenshot(self._screenshot_path)
+            self._update_preview_button_state()
 
     def _clear_screenshot(self) -> None:
+        self._screenshot_path = None
         self.editor.load_screenshot(None)
+        self._update_preview_button_state()
+
+    def _update_preview_button_state(self) -> None:
+        ok = self._screenshot_path is not None and bool(self.phone_var.get())
+        self.preview_btn.config(state="normal" if ok else "disabled")
 
     def _reset_corners(self) -> None:
         self.editor.reset_corners_to_image_bounds()
@@ -279,6 +299,55 @@ class EditorApp:
             f"{k}=({corners[k][0]},{corners[k][1]})" for k in CORNER_KEYS
         )
         self.status_var.set(bits)
+
+    def _render_preview(self) -> None:
+        """Build a one-off composite using the current phone + screenshot,
+        save it under dist/_preview/, and open it. Bypasses the brand
+        pipeline so the user can verify a calibration immediately."""
+        phone_name = self.phone_var.get()
+        if not phone_name or self._screenshot_path is None:
+            return
+        phone_cfg = self.data["phones"].get(phone_name)
+        if phone_cfg is None:
+            return
+
+        # Use the editor's live (possibly-unsaved) corners, not the YAML's.
+        live_corners = self.editor.get_corners()
+        synthetic_brand = {
+            "base_image": str(phone_cfg["base_image"]),
+            "screen_corners": {k: list(live_corners[k]) for k in CORNER_KEYS},
+        }
+        # Pass the screenshot as an absolute path so build_composite finds
+        # it regardless of whether it lives under assets/.
+        synthetic_shot = {"source": str(self._screenshot_path.resolve())}
+
+        out_dir = self.dist_dir / "_preview"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / f"{phone_name}.png"
+
+        try:
+            image = build_composite(synthetic_brand, synthetic_shot, self.assets_dir)
+            image.save(out_path, format="PNG", optimize=True)
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("Render failed", str(exc))
+            return
+
+        self.status_var.set(f"Rendered preview: {out_path.as_uri()}")
+        self._open_path(out_path)
+
+    @staticmethod
+    def _open_path(path: Path) -> None:
+        try:
+            if sys.platform == "darwin":
+                subprocess.Popen(["open", str(path)])
+            elif sys.platform.startswith("linux"):
+                subprocess.Popen(["xdg-open", str(path)])
+            elif sys.platform.startswith("win"):
+                subprocess.Popen(["explorer", str(path)])
+            else:
+                webbrowser.open(path.as_uri())
+        except Exception:
+            webbrowser.open(path.as_uri())
 
     def _save(self) -> None:
         name = self.phone_var.get()

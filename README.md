@@ -137,6 +137,27 @@ What you can do in the editor:
   - Plus the regular scrollbars on the canvas edges.
 - **Save** writes back to `screenshots.yaml` (round-trip via `ruamel.yaml`,
   so existing comments and key order are preserved).
+- **Render preview** builds a one-off composite using the current phone +
+  the loaded screenshot (live corners — works even before you've hit Save)
+  and writes it to `dist/_preview/<phone>.png`, then opens it. This
+  bypasses the brand pipeline, so you can verify a freshly-calibrated phone
+  immediately without wiring it into a brand first. The Render-preview
+  button is disabled until a screenshot is loaded.
+
+## Editor → process pipeline
+
+The two tools have distinct jobs:
+
+- `editor.sh` defines and calibrates *phones* (base image + four corners).
+  Saving writes back to `screenshots.yaml`.
+- `process.sh` runs the *brands* in `screenshots.yaml`. A brand chooses a
+  phone (`phone:` or `phones:`) and supplies its own screenshots/labels/
+  stamps. Calibrating a phone alone won't make `process.sh` render anything
+  new — there must be a brand referencing that phone.
+
+If you just want to see what a calibrated phone looks like with a given
+screenshot, use **Render preview** in the editor. For batch production,
+add or update a brand in the YAML and run `./process.sh`.
 
 Tkinter prerequisite (one-time):
 
