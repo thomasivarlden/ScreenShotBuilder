@@ -1,0 +1,35 @@
+# Capture orchestrator config — brand → Flutter flavor + Android appId.
+#
+# Per-brand PUKs live in `secrets.yaml` (gitignored), keyed by the same
+# brand IDs used here.
+#
+# Run:
+#   python capture.py                          # all brands x all screens
+#   python capture.py --brand fishy            # one brand
+#   python capture.py --screen home            # one screen, all brands
+#   python capture.py --brand fishy --rebuild  # reinstall the APK first
+
+brands:
+  fishy:
+    app_id: nu.fishy.app
+    flavor: fishy
+    dart_defines: {}
+
+  big5:
+    app_id: nu.fishy.app.big5
+    flavor: big5
+    dart_defines: {}
+
+  sportfiskarna:
+    app_id: se.sportfiskarna.fishy.app
+    flavor: sportfiskarna
+    dart_defines: {}
+
+# Where the Flutter project lives (used only when --rebuild is passed).
+# Absolute path or relative to this repo root.
+flutter_project: ~/Projects/fishy_app
+
+# Captures land at <output_dir>/<brand>/<screen>.png. The default places them
+# inside assets/screenshots so the existing screenshot_builder.py pipeline can
+# reference them directly from screenshots.yaml.
+output_dir: assets/screenshots

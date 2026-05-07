@@ -27,3 +27,6 @@ Thumbs.db
 
 # Claude Code workspace
 .claude/
+
+# Capture orchestrator secrets (PUKs)
+secrets.yaml
