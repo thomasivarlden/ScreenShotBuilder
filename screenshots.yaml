@@ -24,10 +24,18 @@ phones:
     # Small preview render of one of the b* phones (1448 x 1086).
     base_image: phones/phone.png
     screen_corners:
-      top_left: [522, 239]
-      top_right: [803, 251]
-      bottom_right: [784, 866]
-      bottom_left: [492, 854]
+      top_left:
+        - 522
+        - 239
+      top_right:
+        - 803
+        - 251
+      bottom_right:
+        - 784
+        - 866
+      bottom_left:
+        - 492
+        - 854
 
   a1:
     base_image: phones/a1.png   # 7240 x 5430
@@ -84,7 +92,6 @@ phones:
       bottom_left:
         - 2244
         - 4327
-
   b4:
     base_image: phones/b4.png
     screen_corners:
@@ -112,16 +119,137 @@ phones:
   b7:
     base_image: phones/b7.png
     screen_corners:
-      top_left: [2610, 1195]
-      top_right: [4015, 1255]
-      bottom_right: [3920, 4330]
-      bottom_left: [2460, 4270]
+      top_left:
+        - 2591
+        - 1143
+      top_right:
+        - 3906
+        - 1222
+      bottom_right:
+        - 3793
+        - 4111
+      bottom_left:
+        - 2390
+        - 4037
+    post_process:
+      crop:
+        box: [500, 500, 5600, 4400]
+      resize:
+        width: 1920
+
+  "1-iPhone":
+    base_image: phones/1-iPhone.png   # 4800 x 3495
+    screen_corners:
+      top_left:
+        - 1709
+        - 269
+      top_right:
+        - 2932
+        - 338
+      bottom_right:
+        - 2921
+        - 2979
+      bottom_left:
+        - 1621
+        - 2973
+
+  "1-Samsung":
+    base_image: phones/1-Samsung.png  # 7680 x 5120
+    screen_corners:
+      top_left:
+        - 2889
+        - 843
+      top_right:
+        - 4359
+        - 869
+      bottom_right:
+        - 4841
+        - 4065
+      bottom_left:
+        - 3157
+        - 4207
+
+  "1-Smartphone":
+    base_image: phones/1-Smartphone.png  # 4800 x 3427
+    screen_corners:
+      top_left:
+        - 1988
+        - 575
+      top_right:
+        - 3051
+        - 621
+      bottom_right:
+        - 2984
+        - 2958
+      bottom_left:
+        - 1871
+        - 2911
+
+  # The six "_Plain_" templates start with rough centered placeholder corners —
+  # open each in the Phone-corners tab and refine.
+  Android_Plain_0:
+    base_image: phones/Android_Plain_0.png   # 5016 x 5016 (square)
+    screen_corners:
+      top_left: [1760, 760]
+      top_right: [3260, 760]
+      bottom_right: [3260, 4260]
+      bottom_left: [1760, 4260]
+
+  Android_Plain_1:
+    base_image: phones/Android_Plain_1.png   # 4344 x 5792
+    screen_corners:
+      top_left: [650, 430]
+      top_right: [3690, 430]
+      bottom_right: [3690, 5360]
+      bottom_left: [650, 5360]
+
+  Android_Plain_2:
+    base_image: phones/Android_Plain_2.png   # 4344 x 5792
+    screen_corners:
+      top_left: [650, 430]
+      top_right: [3690, 430]
+      bottom_right: [3690, 5360]
+      bottom_left: [650, 5360]
+
+  iPhone_Plain_0:
+    base_image: phones/iPhone_Plain_0.png    # 5016 x 5016 (square)
+    screen_corners:
+      top_left:
+        - 1486
+        - 248
+      top_right:
+        - 3537
+        - 248
+      bottom_right:
+        - 3535
+        - 4696
+      bottom_left:
+        - 1486
+        - 4698
+    corner_radius: 256
+  iPhone_Plain_1:
+    base_image: phones/iPhone_Plain_1.png    # 4488 x 5608
+    screen_corners:
+      top_left: [675, 420]
+      top_right: [3815, 420]
+      bottom_right: [3815, 5190]
+      bottom_left: [675, 5190]
+
+  iPhone_Plain_2:
+    base_image: phones/iPhone_Plain_2.png    # 4488 x 5608
+    screen_corners:
+      top_left: [675, 420]
+      top_right: [3815, 420]
+      bottom_right: [3815, 5190]
+      bottom_left: [675, 5190]
+
 brands:
 
   # AcmeInc:
   #   phone: iphone15                          # or phones: [iphone15, iphone15pro]
   #   output_size: [1242, 2688]                # optional final resize
   #   background_color: [255, 255, 255, 0]
+  #   background_image: phones/bg.jpg          # optional: cover-fit behind the phone (drawn over background_color)
   #   post_process:
   #     crop:
   #       margins: [0, 0, 0, 0]                # or box: [l,t,r,b] / center: [w,h]
@@ -159,7 +287,7 @@ brands:
   # Quick local test against assets/phones/phone.png.
   # Drop a PNG at assets/screenshots/test/sample.png and run ./start.sh
   TestBrand:
-    phone: b3
+    phone: b7
     background_color: [240, 240, 240, 255]
     screenshots:
       - source: screenshots/IMG_3677.PNG
@@ -172,3 +300,11 @@ brands:
             shadow_color: "#00000055"
             shadow_offset: [10, 10]
             anchor: "mm"
+  Fishy:
+    phone: iPhone_Plain_0
+    screenshots:
+      - source: screenshots/fishy/IMG_3698.PNG
+        output: 03_IMG_3698.png
+      - source: screenshots/fishy/IMG_3698.PNG
+        output: 02_IMG_3698.png
+    background_image: phones/bg.jpg

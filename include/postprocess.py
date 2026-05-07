@@ -6,7 +6,8 @@ level (applies to every screenshot in the brand) or at screenshot level
 
 Pipeline order:
     1. crop      (absolute box | center | margins)
-    2. adjust    (brightness, contrast, saturation, sharpness, grayscale)
+    2. resize    (width and/or height; missing dimension preserves aspect)
+    3. adjust    (brightness, contrast, saturation, sharpness, grayscale)
 
 Runs *before* the optional `output_size` final resize, so cropped/adjusted
 images still get scaled to the brand's target output dimensions.
@@ -60,6 +61,32 @@ def _apply_crop(image: Image.Image, crop: Any) -> Image.Image:
     return image.crop((l, t, r, b))
 
 
+def _apply_resize(image: Image.Image, resize: Any) -> Image.Image:
+    if resize is None:
+        return image
+    w, h = image.size
+    if isinstance(resize, (list, tuple)) and len(resize) == 2:
+        tw, th = int(resize[0]), int(resize[1])
+    elif isinstance(resize, dict):
+        tw = resize.get("width")
+        th = resize.get("height")
+        if tw is None and th is None:
+            raise ValueError("resize dict needs 'width' and/or 'height'")
+        if tw is None:
+            tw = max(1, round(w * (int(th) / h)))
+            th = int(th)
+        elif th is None:
+            th = max(1, round(h * (int(tw) / w)))
+            tw = int(tw)
+        else:
+            tw, th = int(tw), int(th)
+    else:
+        raise ValueError(f"Unsupported resize value: {resize!r}")
+    if (tw, th) == (w, h):
+        return image
+    return image.resize((max(1, tw), max(1, th)), Image.LANCZOS)
+
+
 def _enhance(image: Image.Image, factory, factor: float) -> Image.Image:
     if factor is None or float(factor) == 1.0:
         return image
@@ -91,5 +118,6 @@ def apply_post_process(image: Image.Image, cfg: Dict[str, Any] | None) -> Image.
     if not cfg:
         return image
     image = _apply_crop(image, cfg.get("crop"))
+    image = _apply_resize(image, cfg.get("resize"))
     image = _apply_adjust(image, cfg.get("adjust"))
     return image

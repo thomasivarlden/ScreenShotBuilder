@@ -13,10 +13,18 @@ import webbrowser
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+from include.assets_tab import AssetsTab
+from include.brand_editor import BrandsTab
 from include.compositor import build_composite
 from include.corner_editor import CORNER_KEYS, CornerEditor
+from include.generate_tab import GenerateTab
 from include.version import APP_NAME, APP_VERSION, banner
-from include.yaml_io import load_round_trip, save_round_trip, update_phone_corners
+from include.yaml_io import (
+    load_round_trip,
+    save_round_trip,
+    update_phone_corner_radius,
+    update_phone_corners,
+)
 
 DEFAULT_CONFIG = "screenshots.yaml"
 DEFAULT_ASSETS = "assets"
@@ -59,7 +67,45 @@ class EditorApp:
     # ---------- UI construction ------------------------------------------
 
     def _build_ui(self) -> None:
-        toolbar = ttk.Frame(self.root, padding=8)
+        # Status bar (declared early so tabs can use it via self.status_var).
+        self.status_var = tk.StringVar(value="Load a phone to begin.")
+        status = ttk.Label(self.root, textvariable=self.status_var, padding=6, anchor="w")
+        status.pack(side="bottom", fill="x")
+
+        # Notebook with two tabs.
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(side="top", fill="both", expand=True)
+
+        # Save button overlaid on the notebook's tab row (right-aligned),
+        # so it shares the vertical space with the tab strip.
+        self.save_btn = ttk.Button(self.notebook, text="Save", command=self._save)
+        self.save_btn.place(relx=1.0, x=-6, y=2, anchor="ne")
+
+        corner_tab = ttk.Frame(self.notebook)
+        self.notebook.add(corner_tab, text="Phone corners")
+
+        brands_tab = BrandsTab(
+            self.notebook, self.data, self.assets_dir,
+            on_dirty=lambda: self._set_dirty(True),
+        )
+        self.notebook.add(brands_tab, text="Brands")
+        self.brands_tab = brands_tab
+
+        generate_tab = GenerateTab(
+            self.notebook,
+            repo_root=self.config_path.parent,
+            config_path=self.config_path,
+            assets_dir=self.assets_dir,
+            on_request_save=self._save_for_generate,
+        )
+        self.notebook.add(generate_tab, text="Generate")
+        self.generate_tab = generate_tab
+
+        assets_tab = AssetsTab(self.notebook, self.data, self.assets_dir)
+        self.notebook.add(assets_tab, text="Assets")
+        self.assets_tab = assets_tab
+
+        toolbar = ttk.Frame(corner_tab, padding=8)
         toolbar.pack(side="top", fill="x")
 
         ttk.Label(toolbar, text="Phone:").pack(side="left")
@@ -83,6 +129,14 @@ class EditorApp:
             .pack(side="left", padx=4)
 
         ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=8)
+        ttk.Label(toolbar, text="Corner radius:").pack(side="left")
+        self.radius_var = tk.StringVar(value="")
+        radius_entry = ttk.Entry(toolbar, textvariable=self.radius_var, width=6)
+        radius_entry.pack(side="left", padx=(2, 0))
+        ttk.Label(toolbar, text="px").pack(side="left", padx=(1, 6))
+        self.radius_var.trace_add("write", lambda *_a: self._on_radius_change())
+
+        ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=8)
         self.preview_btn = ttk.Button(
             toolbar, text="Render preview", command=self._render_preview, state="disabled",
         )
@@ -98,16 +152,12 @@ class EditorApp:
         self.zoom_var = tk.StringVar(value="—")
         ttk.Label(toolbar, textvariable=self.zoom_var, width=8, anchor="center")\
             .pack(side="left", padx=4)
-
-        ttk.Button(toolbar, text="Save", command=self._save).pack(side="right", padx=4)
-
-        # Status bar with live coordinates
-        self.status_var = tk.StringVar(value="Load a phone to begin.")
-        status = ttk.Label(self.root, textvariable=self.status_var, padding=6, anchor="w")
-        status.pack(side="bottom", fill="x")
+        self.coord_var = tk.StringVar(value="—")
+        ttk.Label(toolbar, textvariable=self.coord_var, width=14, anchor="center")\
+            .pack(side="left", padx=4)
 
         # Canvas (wrapped with scrollbars for when the user zooms past viewport)
-        canvas_frame = ttk.Frame(self.root)
+        canvas_frame = ttk.Frame(corner_tab)
         canvas_frame.pack(side="top", fill="both", expand=True)
         canvas_frame.rowconfigure(0, weight=1)
         canvas_frame.columnconfigure(0, weight=1)
@@ -155,6 +205,10 @@ class EditorApp:
         self.canvas.bind("<ButtonPress-3>", self._mid_press)   # macOS sometimes maps wheel-click here
         self.canvas.bind("<B3-Motion>", self._mid_drag)
         self.canvas.bind("<ButtonRelease-3>", self._mid_release)
+
+        # Live cursor coordinates (image-pixel space)
+        self.canvas.bind("<Motion>", self._on_canvas_motion, add="+")
+        self.canvas.bind("<Leave>", lambda _e: self.coord_var.set("—"), add="+")
         for seq, dx, dy in (
             ("<Left>",  -40, 0), ("<Right>",  40, 0),
             ("<Up>",    0, -40), ("<Down>",   0, 40),
@@ -193,9 +247,33 @@ class EditorApp:
         self.editor.load_base(base_path, corners)
         if all(v == (0, 0) for v in corners.values()):
             self.editor.reset_corners_to_image_bounds()
+        # Populate the corner radius field from YAML (suppress dirty during load).
+        self._loading_radius = True
+        try:
+            self.radius_var.set(str(int(phone.get("corner_radius") or 0) or ""))
+        finally:
+            self._loading_radius = False
         self._set_dirty(False)
         self._update_status()
         self._update_preview_button_state()
+
+    def _on_radius_change(self) -> None:
+        # Push the radius into the canvas overlay regardless of dirty state,
+        # so the preview updates while typing.
+        self.editor.set_corner_radius(self._parse_radius() or 0)
+        if getattr(self, "_loading_radius", False):
+            return
+        self._set_dirty(True)
+
+    def _parse_radius(self) -> int | None:
+        s = self.radius_var.get().strip()
+        if not s:
+            return None
+        try:
+            v = int(s)
+        except ValueError:
+            return None
+        return v if v > 0 else None
 
     def _load_screenshot(self) -> None:
         start = self.assets_dir / "screenshots"
@@ -242,6 +320,10 @@ class EditorApp:
 
     def _on_zoom_change(self, scale: float) -> None:
         self.zoom_var.set(f"{scale * 100:.0f}%")
+
+    def _on_canvas_motion(self, event: tk.Event) -> None:
+        pt = self.editor.view_to_image(event.x, event.y)
+        self.coord_var.set(f"{pt[0]}, {pt[1]}" if pt else "—")
 
     # ---------- panning --------------------------------------------------
 
@@ -317,6 +399,9 @@ class EditorApp:
             "base_image": str(phone_cfg["base_image"]),
             "screen_corners": {k: list(live_corners[k]) for k in CORNER_KEYS},
         }
+        live_radius = self._parse_radius()
+        if live_radius:
+            synthetic_brand["corner_radius"] = live_radius
         # Pass the screenshot as an absolute path so build_composite finds
         # it regardless of whether it lives under assets/.
         synthetic_shot = {"source": str(self._screenshot_path.resolve())}
@@ -350,17 +435,40 @@ class EditorApp:
             webbrowser.open(path.as_uri())
 
     def _save(self) -> None:
+        # Commit live corner values for the currently-selected phone (if any)
+        # before writing — brand-tab edits already sync into self.data on the
+        # fly, so this is the only thing we need to flush manually.
         name = self.phone_var.get()
-        if not name:
-            return
         try:
-            update_phone_corners(self.data, name, self.editor.get_corners())
+            if name and self.editor.has_image():
+                update_phone_corners(self.data, name, self.editor.get_corners())
+                update_phone_corner_radius(self.data, name, self._parse_radius())
             save_round_trip(self.config_path, self.data)
         except Exception as exc:  # noqa: BLE001
             messagebox.showerror("Save failed", str(exc))
             return
         self._set_dirty(False)
-        self.status_var.set(f"Saved {name} corners to {self.config_path.name}.")
+        self.status_var.set(f"Saved changes to {self.config_path.name}.")
+
+    def _save_for_generate(self) -> bool:
+        """Called by the Generate tab before launching a build.
+
+        If there are unsaved changes, ask whether to save first. Returns True
+        if the build should proceed, False if the user cancelled.
+        """
+        if not self._dirty:
+            return True
+        answer = messagebox.askyesnocancel(
+            "Unsaved changes",
+            "You have unsaved changes. Save before generating?",
+        )
+        if answer is None:        # Cancel
+            return False
+        if answer is False:       # No — proceed without saving
+            return True
+        # Yes — save and proceed only if the save succeeds.
+        self._save()
+        return not self._dirty
 
     def _set_dirty(self, dirty: bool) -> None:
         self._dirty = dirty

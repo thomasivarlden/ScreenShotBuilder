@@ -19,6 +19,8 @@ HANDLE_RADIUS = 9
 HANDLE_FILL = "#ff3b30"
 HANDLE_OUTLINE = "#ffffff"
 LINE_COLOR = "#ff3b30"
+ROUND_COLOR = "#ffd60a"        # rounded-corner preview overlay
+ROUND_SAMPLES = 12             # segments per corner arc
 
 
 class CornerEditor:
@@ -49,6 +51,8 @@ class CornerEditor:
         self._line_ids: List[int] = []
         self._handle_ids: Dict[str, int] = {}
         self._label_ids: Dict[str, int] = {}
+        self._round_id: int | None = None
+        self._radius: int = 0     # corner radius in base-image pixels
 
         # Corners in IMAGE pixel coords (not canvas coords).
         self._corners: Dict[str, Tuple[int, int]] = {}
@@ -81,6 +85,17 @@ class CornerEditor:
 
     def get_corners(self) -> Dict[str, Tuple[int, int]]:
         return {k: (int(v[0]), int(v[1])) for k, v in self._corners.items()}
+
+    def has_image(self) -> bool:
+        return self._base_pil is not None
+
+    def set_corner_radius(self, radius: int) -> None:
+        """Set the rounded-corner preview radius (in base-image pixels)."""
+        new = max(0, int(radius or 0))
+        if new == self._radius:
+            return
+        self._radius = new
+        self._redraw_round_overlay()
 
     # ---------- zoom -----------------------------------------------------
 
@@ -158,6 +173,19 @@ class CornerEditor:
             return (0, 0)
         return int(round(x / self._scale)), int(round(y / self._scale))
 
+    def view_to_image(self, view_x: float, view_y: float) -> Tuple[int, int] | None:
+        """Convert viewport (event.x/y) coords to image-pixel coords, or None
+        if no image is loaded or the cursor is outside the image bounds."""
+        if self._base_pil is None:
+            return None
+        cx = self.canvas.canvasx(view_x)
+        cy = self.canvas.canvasy(view_y)
+        ix, iy = self._canvas_to_img(cx, cy)
+        bw, bh = self._base_pil.size
+        if ix < 0 or iy < 0 or ix >= bw or iy >= bh:
+            return None
+        return ix, iy
+
     # ---------- drawing --------------------------------------------------
 
     def _compute_scale(self) -> float:
@@ -186,12 +214,68 @@ class CornerEditor:
         composed.alpha_composite(base)
         return composed
 
+    def _rounded_outline_points(self) -> List[float] | None:
+        """Return canvas-space (x,y) coords for a closed rounded-rect outline
+        following the four corners' quad. Returns None if radius is 0 or any
+        edge is shorter than 2*radius (avoids cusps)."""
+        if self._radius <= 0 or not self._corners:
+            return None
+        import math
+        pts_img = [self._corners[k] for k in CORNER_KEYS]
+        edges = [
+            (pts_img[i], pts_img[(i + 1) % 4]) for i in range(4)
+        ]
+        # Edge lengths in image space — make sure radius fits.
+        edge_lens = [math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in edges]
+        if min(edge_lens) < self._radius * 2:
+            return None  # quad too small for this radius
+
+        r = self._radius
+        out: List[float] = []
+        for i in range(4):
+            prev = pts_img[(i - 1) % 4]
+            curr = pts_img[i]
+            nxt = pts_img[(i + 1) % 4]
+            # Inset point toward previous corner (start of arc).
+            dx1, dy1 = prev[0] - curr[0], prev[1] - curr[1]
+            l1 = math.hypot(dx1, dy1) or 1.0
+            p1 = (curr[0] + dx1 / l1 * r, curr[1] + dy1 / l1 * r)
+            # Inset point toward next corner (end of arc).
+            dx2, dy2 = nxt[0] - curr[0], nxt[1] - curr[1]
+            l2 = math.hypot(dx2, dy2) or 1.0
+            p2 = (curr[0] + dx2 / l2 * r, curr[1] + dy2 / l2 * r)
+            # Sample a quadratic Bezier P1 → curr → P2 to approximate the arc.
+            for s in range(ROUND_SAMPLES + 1):
+                t = s / ROUND_SAMPLES
+                u = 1 - t
+                bx = u * u * p1[0] + 2 * u * t * curr[0] + t * t * p2[0]
+                by = u * u * p1[1] + 2 * u * t * curr[1] + t * t * p2[1]
+                cx, cy = self._img_to_canvas(bx, by)
+                out.extend((cx, cy))
+        # Close the loop by repeating the first point.
+        out.extend(out[:2])
+        return out
+
+    def _redraw_round_overlay(self) -> None:
+        if self._round_id is not None:
+            self.canvas.delete(self._round_id)
+            self._round_id = None
+        if self._base_pil is None:
+            return
+        coords = self._rounded_outline_points()
+        if coords is None:
+            return
+        self._round_id = self.canvas.create_line(
+            *coords, fill=ROUND_COLOR, width=2, smooth=False,
+        )
+
     def _redraw(self) -> None:
         self.canvas.delete("all")
         self._image_id = None
         self._line_ids.clear()
         self._handle_ids.clear()
         self._label_ids.clear()
+        self._round_id = None
         if self._base_pil is None:
             return
 
@@ -219,6 +303,9 @@ class CornerEditor:
                 x1, y1, x2, y2, fill=LINE_COLOR, dash=(6, 4), width=2
             )
             self._line_ids.append(line)
+
+        # Rounded-corner preview overlay (drawn on top of the dashed quad).
+        self._redraw_round_overlay()
 
         # Handles + coord labels
         for key in CORNER_KEYS:
@@ -301,6 +388,8 @@ class CornerEditor:
             ax, ay = self._img_to_canvas(*self._corners[a])
             bx, by = self._img_to_canvas(*self._corners[b])
             self.canvas.coords(line_id, ax, ay, bx, by)
+        # Update the rounded preview to follow.
+        self._redraw_round_overlay()
         self._notify()
 
     def _on_release(self, event: tk.Event) -> None:

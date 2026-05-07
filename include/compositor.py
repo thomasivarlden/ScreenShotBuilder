@@ -2,7 +2,7 @@
 from pathlib import Path
 from typing import Any, Dict, List, Sequence, Tuple
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFont
 
 from .perspective import warp_to_quad
 from .postprocess import apply_post_process
@@ -12,6 +12,39 @@ Point = Tuple[float, float]
 
 def _to_point(v: Sequence) -> Point:
     return (float(v[0]), float(v[1]))
+
+
+def _round_corners(image: Image.Image, radius_base_px: float, quad: List[Point]) -> Image.Image:
+    """Apply a rounded-rect alpha mask to `image` (the screenshot).
+
+    `radius_base_px` is given in *base-image* pixels (i.e. matches the units
+    of `screen_corners`). It's scaled into screenshot space using the average
+    width of the quad, so the curve looks consistent regardless of screenshot
+    resolution.
+    """
+    import math
+    (tlx, tly), (trx, try_), (brx, bry), (blx, bly) = quad
+    top_w = math.hypot(trx - tlx, try_ - tly)
+    bottom_w = math.hypot(brx - blx, bry - bly)
+    avg_quad_w = max(1.0, (top_w + bottom_w) / 2.0)
+    scale = image.width / avg_quad_w
+    r = max(0, int(round(radius_base_px * scale)))
+    if r <= 0:
+        return image
+    # Clamp to half the shorter side to avoid invalid radii.
+    r = min(r, image.width // 2, image.height // 2)
+    if r <= 0:
+        return image
+
+    mask = Image.new("L", image.size, 0)
+    ImageDraw.Draw(mask).rounded_rectangle(
+        (0, 0, image.width - 1, image.height - 1), radius=r, fill=255,
+    )
+    out = image.copy()
+    # Combine the rounded mask with whatever alpha the screenshot already had.
+    combined_alpha = ImageChops.multiply(out.getchannel("A"), mask)
+    out.putalpha(combined_alpha)
+    return out
 
 
 def _quad_from_corners(corners: Dict[str, Sequence]) -> List[Point]:
@@ -103,12 +136,35 @@ def build_composite(
     bg_color = brand_cfg.get("background_color", [0, 0, 0, 0])
     canvas = Image.new("RGBA", base.size, tuple(bg_color))
 
+    bg_image_rel = brand_cfg.get("background_image")
+    if bg_image_rel:
+        bg_path = assets_dir / bg_image_rel
+        if not bg_path.is_file():
+            raise FileNotFoundError(f"Background image not found: {bg_path}")
+        bg = Image.open(bg_path).convert("RGBA")
+        # Cover-fit: scale so bg fills base.size, then center-crop.
+        tw, th = base.size
+        scale = max(tw / bg.width, th / bg.height)
+        new_size = (max(1, int(round(bg.width * scale))), max(1, int(round(bg.height * scale))))
+        bg = bg.resize(new_size, Image.LANCZOS)
+        left = (bg.width - tw) // 2
+        top = (bg.height - th) // 2
+        bg = bg.crop((left, top, left + tw, top + th))
+        canvas.alpha_composite(bg)
+
     shot_path = assets_dir / shot_cfg["source"]
     if not shot_path.is_file():
         raise FileNotFoundError(f"Screenshot source not found: {shot_path}")
     screenshot = Image.open(shot_path).convert("RGBA")
 
     quad = _quad_from_corners(brand_cfg["screen_corners"])
+
+    # Optional rounded corners. The radius is given in base-image pixels; we
+    # convert it to screenshot pixels so the curve is applied before warping.
+    radius_base = brand_cfg.get("corner_radius")
+    if radius_base and float(radius_base) > 0:
+        screenshot = _round_corners(screenshot, float(radius_base), quad)
+
     warped = warp_to_quad(screenshot, base.size, quad)
 
     # Screenshot goes BEHIND the base (so transparent display reveals it).

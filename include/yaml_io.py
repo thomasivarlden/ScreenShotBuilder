@@ -43,3 +43,15 @@ def update_phone_corners(
     for key in ("top_left", "top_right", "bottom_right", "bottom_left"):
         x, y = corners[key]
         sc[key] = [int(x), int(y)]
+
+
+def update_phone_corner_radius(data: Any, phone_name: str, radius: int | None) -> None:
+    """Set or remove the corner_radius for the named phone."""
+    if "phones" not in data or phone_name not in data["phones"]:
+        raise KeyError(f"phone '{phone_name}' not found in YAML")
+    phone = data["phones"][phone_name]
+    if radius is None or radius <= 0:
+        if "corner_radius" in phone:
+            del phone["corner_radius"]
+    else:
+        phone["corner_radius"] = int(radius)

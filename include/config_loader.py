@@ -46,6 +46,44 @@ def validate_phones(phones: Dict[str, Any]) -> None:
         _validate_phone(name, cfg)
 
 
+def resolve_shot_phone(
+    brand_name: str,
+    brand: Dict[str, Any],
+    shot: Dict[str, Any],
+    phones: Dict[str, Any],
+) -> tuple[str, Dict[str, Any]]:
+    """Return (phone_name, phone_cfg) for one output (screenshot entry).
+
+    Resolution order:
+      1. shot.phone — per-output override (preferred in the new model)
+      2. brand.phone — brand-level default
+      3. first entry of brand.phones — legacy matrix mode, fall back to first
+      4. brand inline base_image+screen_corners
+    """
+    name = shot.get("phone") or brand.get("phone")
+    if not name and isinstance(brand.get("phones"), list) and brand["phones"]:
+        name = brand["phones"][0]
+    if name:
+        if name not in phones:
+            raise ConfigError(
+                f"Brand '{brand_name}' references unknown phone '{name}'"
+            )
+        return name, phones[name]
+
+    if "base_image" in brand and "screen_corners" in brand:
+        inline = {
+            "base_image": brand["base_image"],
+            "screen_corners": brand["screen_corners"],
+        }
+        _validate_phone(f"{brand_name} (inline)", inline)
+        return "", inline
+
+    raise ConfigError(
+        f"Brand '{brand_name}' output {shot.get('output') or shot.get('source') or '?'}: "
+        f"no 'phone' on the output and no brand-level fallback"
+    )
+
+
 def resolve_brand_phones(
     brand_name: str,
     brand: Dict[str, Any],
