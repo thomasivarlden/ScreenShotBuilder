@@ -362,10 +362,10 @@ brands:
         post_process:
           crop:
             box:
-              - 1017
-              - 175
-              - 3391
-              - 5336
+              - 827
+              - 47
+              - 3561
+              - 5978
           resize:
             width: 1320
             height: 2868
@@ -377,10 +377,10 @@ brands:
         post_process:
           crop:
             box:
-              - 1353
-              - 0
-              - 3656
-              - 5007
+              - 1243
+              - 168
+              - 3736
+              - 5588
           resize:
             width: 1320
             height: 2868
@@ -400,7 +400,7 @@ brands:
           resize:
             width: 1320
             height: 2868
-      - source: screenshots/fishy/IMG_3698.PNG
+      - source: screenshots/fishy/IMG_3693.PNG
         output: 04_IMG_3698.png
         phone: b3
         labels: []
@@ -408,9 +408,9 @@ brands:
         post_process:
           crop:
             box:
-              - 2024
               - 0
-              - 4527
+              - 1311
+              - 7240
               - 5430
           resize:
             width: 1320

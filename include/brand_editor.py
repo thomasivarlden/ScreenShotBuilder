@@ -112,6 +112,51 @@ def parse_nid(nid: str) -> tuple[str, list[str]]:
     return parts[0], parts[1:]
 
 
+def attach_tooltip(widget: tk.Widget, text: str) -> None:
+    """Show a small tooltip after hovering over `widget`."""
+    state: dict[str, Any] = {"tip": None, "after": None}
+
+    def show() -> None:
+        state["after"] = None
+        if state["tip"] is not None:
+            return
+        try:
+            x = widget.winfo_rootx() + 12
+            y = widget.winfo_rooty() + widget.winfo_height() + 4
+        except tk.TclError:
+            return
+        tip = tk.Toplevel(widget)
+        tip.wm_overrideredirect(True)
+        tip.wm_geometry(f"+{x}+{y}")
+        tk.Label(
+            tip, text=text, bg="#000000", fg=C_TEXT,
+            relief="solid", borderwidth=1, padx=6, pady=2,
+        ).pack()
+        state["tip"] = tip
+
+    def hide(_e: object = None) -> None:
+        if state["after"] is not None:
+            try:
+                widget.after_cancel(state["after"])
+            except tk.TclError:
+                pass
+            state["after"] = None
+        if state["tip"] is not None:
+            try:
+                state["tip"].destroy()
+            except tk.TclError:
+                pass
+            state["tip"] = None
+
+    def enter(_e: object) -> None:
+        hide()
+        state["after"] = widget.after(450, show)
+
+    widget.bind("<Enter>", enter, add="+")
+    widget.bind("<Leave>", hide, add="+")
+    widget.bind("<ButtonPress>", hide, add="+")
+
+
 # ==========================================================================
 # BrandsTab
 # ==========================================================================
@@ -728,6 +773,8 @@ class BrandsTab(ttk.Frame):
         )
         self.crop_copy_btn.pack(side="right", padx=(2, 0))
         self.crop_paste_btn.pack(side="right", padx=(2, 0))
+        attach_tooltip(self.crop_copy_btn, "Copy transform")
+        attach_tooltip(self.crop_paste_btn, "Paste transform")
         self._refresh_paste_state()
 
         # Fields grid — 2 columns, left-aligned, name-keyed for show/hide.
@@ -795,7 +842,7 @@ class BrandsTab(ttk.Frame):
     _CROP_HINT = {
         "none":    "",
         "margins": "px to trim from each edge",
-        "box":     "absolute pixel rectangle to keep",
+        "box":     "rectangle to keep",
         "center":  "size of the centered crop",
     }
 
