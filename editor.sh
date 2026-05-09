@@ -18,17 +18,24 @@ fail()  { printf "\033[1;31m%s\033[0m\n" "$*" >&2; exit 1; }
 color "Screenshot Builder — GUI editor startup"
 
 # 1. Python 3.10+
-command -v python3 >/dev/null 2>&1 || fail "python3 is not installed or not on PATH."
-PY_VER="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
-PY_OK="$(python3 -c 'import sys; print(1 if sys.version_info >= (3,10) else 0)')"
+if command -v python3 >/dev/null 2>&1; then
+  PYTHON=python3
+elif command -v python >/dev/null 2>&1; then
+  PYTHON=python
+else
+  fail "Python is not installed or not on PATH."
+fi
+PY_VER="$($PYTHON -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
+PY_OK="$($PYTHON -c 'import sys; print(1 if sys.version_info >= (3,10) else 0)')"
 [[ "$PY_OK" == "1" ]] || fail "Python >= 3.10 required (found ${PY_VER})."
-color "  python3 ${PY_VER} OK"
+color "  ${PYTHON} ${PY_VER} OK"
 
 # 2. tkinter
-if ! python3 -c "import tkinter" >/dev/null 2>&1; then
+if ! $PYTHON -c "import tkinter" >/dev/null 2>&1; then
   cat >&2 <<EOF
 Tkinter is not available in your Python.
 
+  Windows         : Re-run the Python installer and tick "tcl/tk and IDLE"
   macOS (Homebrew): brew install python-tk@${PY_VER}
   Ubuntu/Debian   : sudo apt install python3-tk
   Fedora          : sudo dnf install python3-tkinter
@@ -48,14 +55,24 @@ color "  tkinter OK"
 # 4. venv
 if [[ ! -d "$VENV_DIR" ]]; then
   color "  Creating virtual environment at .venv"
-  python3 -m venv "$VENV_DIR"
+  $PYTHON -m venv "$VENV_DIR"
 fi
 # shellcheck disable=SC1091
-source "${VENV_DIR}/bin/activate"
+if [[ -f "${VENV_DIR}/Scripts/activate" ]]; then
+  source "${VENV_DIR}/Scripts/activate"
+else
+  source "${VENV_DIR}/bin/activate"
+fi
 
 # 5. Install / upgrade deps (only if requirements changed)
 HASH_FILE="${VENV_DIR}/.req.hash"
-NEW_HASH="$(shasum -a 256 "$REQ_FILE" | awk '{print $1}')"
+if command -v sha256sum >/dev/null 2>&1; then
+  NEW_HASH="$(sha256sum "$REQ_FILE" | awk '{print $1}')"
+elif command -v shasum >/dev/null 2>&1; then
+  NEW_HASH="$(shasum -a 256 "$REQ_FILE" | awk '{print $1}')"
+else
+  NEW_HASH=""
+fi
 OLD_HASH="$(cat "$HASH_FILE" 2>/dev/null || true)"
 if [[ "$NEW_HASH" != "$OLD_HASH" ]]; then
   color "  Installing dependencies"

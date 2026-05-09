@@ -377,15 +377,14 @@ brands:
         post_process:
           crop:
             box:
-              - 1243
-              - 168
-              - 3736
+              - 1168
+              - 0
+              - 3761
               - 5588
           resize:
             width: 1320
             height: 2868
-      - source: /Users/thomas/Library/CloudStorage/GoogleDrive-info@fishytech.biz/Min enhet/Grafiskt Material/Appgrafik 
-          2026/Screenshots/IMG_3701.PNG
+      - source: screenshots\fishy\IMG_3701.PNG
         output: 03_IMG_3696.png
         phone: iPhone_Plain_2
         labels: []
@@ -393,10 +392,10 @@ brands:
         post_process:
           crop:
             box:
-              - 1060
-              - 150
-              - 3438
-              - 5308
+              - 874
+              - 0
+              - 3783
+              - 5942
           resize:
             width: 1320
             height: 2868
@@ -412,9 +411,6 @@ brands:
               - 1311
               - 7240
               - 5430
-          resize:
-            width: 1320
-            height: 2868
     background_image: backgrounds/gray_waves.png
     background_scale: 1.2
     phone_padding:

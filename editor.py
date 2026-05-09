@@ -66,13 +66,50 @@ class EditorApp:
 
     # ---------- UI construction ------------------------------------------
 
+    def _build_menu(self) -> None:
+        menubar = tk.Menu(self.root)
+
+        file_menu = tk.Menu(menubar, tearoff=False)
+        file_menu.add_command(label="Save", accelerator="Ctrl+S", command=self._save)
+        file_menu.add_separator()
+        file_menu.add_command(label="Load screenshot…", command=self._load_screenshot)
+        file_menu.add_command(label="Clear screenshot", command=self._clear_screenshot)
+        file_menu.add_separator()
+        file_menu.add_command(label="Exit", command=self._on_close)
+        menubar.add_cascade(label="File", menu=file_menu)
+
+        edit_menu = tk.Menu(menubar, tearoff=False)
+        edit_menu.add_command(label="Reset corners", command=self._reset_corners)
+        edit_menu.add_command(label="Render preview", command=self._render_preview)
+        menubar.add_cascade(label="Edit", menu=edit_menu)
+
+        view_menu = tk.Menu(menubar, tearoff=False)
+        view_menu.add_command(label="Zoom in", accelerator="Ctrl++", command=self._zoom_in)
+        view_menu.add_command(label="Zoom out", accelerator="Ctrl+-", command=self._zoom_out)
+        view_menu.add_command(label="Fit", accelerator="Ctrl+0", command=self._zoom_reset)
+        menubar.add_cascade(label="View", menu=view_menu)
+
+        help_menu = tk.Menu(menubar, tearoff=False)
+        help_menu.add_command(
+            label=f"About {APP_NAME}",
+            command=lambda: messagebox.showinfo(
+                f"About {APP_NAME}", f"{APP_NAME} v{APP_VERSION}\n© Thomas F Abrahamsson / Alvega & Co AB"
+            ),
+        )
+        menubar.add_cascade(label="Help", menu=help_menu)
+
+        self.root.config(menu=menubar)
+        self.root.bind("<Control-s>", lambda _e: self._save())
+
     def _build_ui(self) -> None:
+        self._build_menu()
+
         # Status bar (declared early so tabs can use it via self.status_var).
         self.status_var = tk.StringVar(value="Load a phone to begin.")
         status = ttk.Label(self.root, textvariable=self.status_var, padding=6, anchor="w")
         status.pack(side="bottom", fill="x")
 
-        # Notebook with two tabs.
+        # Notebook with four tabs.
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(side="top", fill="both", expand=True)
 
