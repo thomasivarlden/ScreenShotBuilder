@@ -89,7 +89,8 @@ capture/                  Android-emulator capture package
   flow.py                 step runner
   flows.py                screen flows (login, home, …) — registered in SCREENS
 
-assets/                   inputs (gitignored — your own art)
+assets/                   inputs — Git submodule pointing at the private
+                          ScreenShotBuilder-assets repo (LFS-tracked)
   phones/                 base images (hand+phone, transparent display)
   backgrounds/            optional background images per brand
   screenshots/<brand>/    plain app screenshots
@@ -102,6 +103,7 @@ dist/                     outputs (gitignored)
 The subfolder layout under `assets/` is just a recommended convention — any
 path that resolves under `assets/` works. Reference paths in the YAML
 relative to `assets/` (e.g. `phones/hand_phone.png`, `logos/acme/logo.png`).
+See [Cloning](#cloning) below for how to fetch the assets submodule.
 
 ## Requirements
 
@@ -323,5 +325,8 @@ transparent display window reveals it.
 - Output is always PNG with alpha.
 - Font lookup order: explicit `font` path (relative to `assets/` or absolute)
   → common system fonts (Helvetica, Arial, DejaVu) → Pillow default bitmap.
-- `assets/`, `dist/`, and `secrets.yaml` are git-ignored on purpose — keep
-  your brand art and PUKs out of the source repo.
+- `dist/` and `secrets.yaml` are git-ignored on purpose — keep generated
+  output and PUKs out of the source repo. `assets/` lives in a separate
+  **private** submodule (`ScreenShotBuilder-assets`) so brand art stays
+  out of the public source repo while still being version-pinned to the
+  code.
