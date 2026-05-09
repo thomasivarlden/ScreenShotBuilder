@@ -14,9 +14,6 @@ env/
 # Build output (generated screenshots)
 dist/
 
-# Input assets (brand-specific binaries — not part of the source repo)
-assets/
-
 # OS / editor cruft
 .DS_Store
 Thumbs.db

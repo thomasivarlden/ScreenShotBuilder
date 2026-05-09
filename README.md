@@ -111,6 +111,29 @@ relative to `assets/` (e.g. `phones/hand_phone.png`, `logos/acme/logo.png`).
 - For the GUI editor: Tkinter (see *Tkinter prerequisite* below)
 - For the capture orchestrator: a working Android SDK (`adb`, `emulator`)
   and `fvm` if you use `--rebuild`
+- For brand assets: `git-lfs` (the `assets/` directory is a private submodule
+  with LFS-tracked phone/logo/background PNGs)
+
+### Cloning
+
+The `assets/` directory is a Git submodule pointing to a **private** repo
+that holds the brand-specific binary assets via Git LFS. To get a working
+checkout in one step:
+
+```bash
+brew install git-lfs && git lfs install         # one-time
+git clone --recurse-submodules https://github.com/thomasivarlden/ScreenShotBuilder.git
+```
+
+If you already cloned without `--recurse-submodules`:
+
+```bash
+git submodule update --init --recursive
+```
+
+You need access to the private `ScreenShotBuilder-assets` repo for the
+submodule fetch to succeed. Without it the code still runs — it just
+can't render anything that references missing files.
 
 ## Quick start
 
