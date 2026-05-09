@@ -150,6 +150,8 @@ class BrandsTab(ttk.Frame):
         self._cur_preview_key: tuple[str, int] | None = None  # (brand, shot_idx)
         self._preview_origin: tuple[int, int] = (0, 0)
         self._drag_handle: str | None = None  # "tl"|"tr"|"br"|"bl" or None
+        # Crop-rect move state: (start_ix, start_iy, l0, t0, r0, b0) or None
+        self._drag_move: tuple[int, int, int, int, int, int] | None = None
 
         self._build_ui()
         self._refresh_tree()
@@ -367,6 +369,31 @@ class BrandsTab(ttk.Frame):
                    command=self._browse_bg_image).pack(side="left")
         ttk.Button(row, text="✕", style="Icon.TButton", width=2,
                    command=lambda: self.bg_image_var.set("")).pack(side="left", padx=(2, 0))
+        # scale
+        row = ttk.Frame(card); row.pack(fill="x", pady=2)
+        ttk.Label(row, text="Scale", width=12).pack(side="left")
+        bg_scale_raw = brand.get("background_scale")
+        self.bg_scale_var = tk.StringVar(
+            value=str(float(bg_scale_raw)) if bg_scale_raw is not None else "")
+        self.bg_scale_var.trace_add("write", lambda *_a: self._on_brand_field_change())
+        ttk.Entry(row, textvariable=self.bg_scale_var, width=8).pack(side="left")
+        ttk.Label(row, text=" (1.0 = default, >1 zooms in)", style="Dim.TLabel")\
+            .pack(side="left", padx=4)
+
+        # --- Phone padding card ---
+        card = self._card(body, "Phone padding")
+        pad = brand.get("phone_padding") or {}
+        self.pad_vars = {}
+        for key in ("top", "right", "bottom", "left"):
+            row = ttk.Frame(card); row.pack(fill="x", pady=2)
+            ttk.Label(row, text=key.capitalize(), width=12).pack(side="left")
+            val = pad.get(key) if isinstance(pad, dict) else None
+            var = tk.StringVar(value=str(int(val)) if val else "")
+            var.trace_add("write", lambda *_a: self._on_brand_field_change())
+            ttk.Entry(row, textvariable=var, width=8).pack(side="left")
+            self.pad_vars[key] = var
+        ttk.Label(card, text="px added around the phone (canvas grows)",
+                  style="Dim.TLabel").pack(anchor="w", padx=4, pady=(0, 2))
 
         # --- Output size card ---
         card = self._card(body, "Output size")
@@ -399,6 +426,24 @@ class BrandsTab(ttk.Frame):
 
         bg_image = self.bg_image_var.get().strip() or None
 
+        try:
+            bg_scale = float(self.bg_scale_var.get().strip()) if self.bg_scale_var.get().strip() else None
+            if bg_scale == 1.0:
+                bg_scale = None
+        except ValueError:
+            bg_scale = None
+
+        phone_padding = {}
+        for key, var in self.pad_vars.items():
+            try:
+                v = int(var.get().strip()) if var.get().strip() else 0
+            except ValueError:
+                v = 0
+            if v > 0:
+                phone_padding[key] = v
+        if not phone_padding:
+            phone_padding = None
+
         out_w = self.out_w_var.get().strip()
         out_h = self.out_h_var.get().strip()
         try:
@@ -411,6 +456,8 @@ class BrandsTab(ttk.Frame):
                 self.data, self._sel_brand,
                 background_color=bg_color,
                 background_image=bg_image,
+                background_scale=bg_scale,
+                phone_padding=phone_padding,
                 output_size=output_size,
             )
         except KeyError:
@@ -1915,33 +1962,94 @@ class BrandsTab(ttk.Frame):
                     return tag.split(":", 1)[1]
         return None
 
+    def _current_crop_box(self) -> tuple[int, int, int, int] | None:
+        """Return the active crop box in image-pixel coords, or None."""
+        if (self._sel_brand is None or self._sel_shot is None
+                or self._preview_image is None):
+            return None
+        try:
+            shots = brand_io.get_screenshots(self.data, self._sel_brand)
+            shot = shots[self._sel_shot]
+        except Exception:
+            return None
+        pp = shot.get("post_process") or {}
+        crop = pp.get("crop") if isinstance(pp, dict) else None
+        if not crop:
+            return None
+        iw, ih = self._preview_image.size
+        try:
+            return self._resolve_crop_for_overlay(crop, iw, ih)
+        except Exception:
+            return None
+
+    def _hit_crop_interior(self, vx: int, vy: int) -> bool:
+        """True if (vx, vy) is inside the dotted rect but not on a corner handle.
+
+        Only meaningful in 'box' / 'margins' modes; 'center' is symmetric and
+        not draggable.
+        """
+        if self._hit_handle(vx, vy) is not None:
+            return False
+        mode = getattr(self, "crop_mode_var", None)
+        if mode is None or mode.get() not in ("box", "margins"):
+            return False
+        box = self._current_crop_box()
+        if box is None:
+            return False
+        l, t, r, b = box
+        ox, oy = self._preview_origin
+        s = self._preview_scale or 1.0
+        cx = self.preview_canvas.canvasx(vx)
+        cy = self.preview_canvas.canvasy(vy)
+        return (ox + l * s) <= cx <= (ox + r * s) and (oy + t * s) <= cy <= (oy + b * s)
+
     def _on_preview_press(self, event: tk.Event) -> None:
         h = self._hit_handle(event.x, event.y)
         if h is not None:
             self._drag_handle = h
+            self._drag_move = None
             self.preview_canvas.config(cursor="crosshair")
             return
+        if self._hit_crop_interior(event.x, event.y):
+            box = self._current_crop_box()
+            if box is not None and self._preview_image is not None:
+                ox, oy = self._preview_origin
+                s = self._preview_scale or 1.0
+                ix0 = int(round((self.preview_canvas.canvasx(event.x) - ox) / s))
+                iy0 = int(round((self.preview_canvas.canvasy(event.y) - oy) / s))
+                self._drag_move = (ix0, iy0, *box)
+                self._drag_handle = None
+                self.preview_canvas.config(cursor="fleur")
+                return
         self._drag_handle = None
+        self._drag_move = None
         self.preview_canvas.scan_mark(event.x, event.y)
         self.preview_canvas.config(cursor="fleur")
 
     def _on_preview_drag(self, event: tk.Event) -> None:
         if self._drag_handle:
             self._drag_crop_handle(event.x, event.y)
+        elif self._drag_move is not None:
+            self._drag_crop_move(event.x, event.y)
         else:
             self.preview_canvas.scan_dragto(event.x, event.y, gain=1)
 
     def _on_preview_release(self, _event: tk.Event) -> None:
         if self._drag_handle is not None:
             self._drag_handle = None
+        if self._drag_move is not None:
+            self._drag_move = None
         self.preview_canvas.config(cursor="")
 
     def _on_preview_motion(self, event: tk.Event) -> None:
-        if self._drag_handle is not None:
+        if self._drag_handle is not None or self._drag_move is not None:
             return  # cursor already set during drag
-        self.preview_canvas.config(
-            cursor="crosshair" if self._hit_handle(event.x, event.y) else ""
-        )
+        if self._hit_handle(event.x, event.y) is not None:
+            self.preview_canvas.config(cursor="crosshair")
+        elif self._hit_crop_interior(event.x, event.y):
+            self.preview_canvas.config(cursor="fleur")
+        else:
+            self.preview_canvas.config(cursor="")
 
     def _drag_crop_handle(self, vx: int, vy: int) -> None:
         if (self._sel_brand is None or self._sel_shot is None
@@ -2046,6 +2154,60 @@ class BrandsTab(ttk.Frame):
                 self.crop_w_var.set(str(max(1, w_disp)))
                 self.crop_h_var.set(str(max(1, h_disp)))
             self.crop_a_var.set(self._format_aspect(w_disp, h_disp))
+        finally:
+            self._loading = prev_loading
+            self._suppress_crop_sync = prev_suppress
+        self.on_dirty()
+        self._draw_crop_overlay()
+
+    def _drag_crop_move(self, vx: int, vy: int) -> None:
+        """Translate the crop box by the cursor delta, clamped to image bounds."""
+        if (self._drag_move is None or self._sel_brand is None
+                or self._sel_shot is None or self._preview_image is None):
+            return
+        ix0, iy0, l0, t0, r0, b0 = self._drag_move
+        iw, ih = self._preview_image.size
+        ox, oy = self._preview_origin
+        s = self._preview_scale or 1.0
+        ix = int(round((self.preview_canvas.canvasx(vx) - ox) / s))
+        iy = int(round((self.preview_canvas.canvasy(vy) - oy) / s))
+        dx = ix - ix0
+        dy = iy - iy0
+        w = r0 - l0
+        h = b0 - t0
+        new_l = max(0, min(iw - w, l0 + dx))
+        new_t = max(0, min(ih - h, t0 + dy))
+        new_r = new_l + w
+        new_b = new_t + h
+
+        mode = self.crop_mode_var.get()
+        if mode == "margins":
+            new_values = [new_l, new_t, iw - new_r, ih - new_b]
+        else:
+            mode = "box"
+            new_values = [new_l, new_t, new_r, new_b]
+
+        brand_io.update_post_process(
+            self.data, self._sel_brand, self._sel_shot,
+            crop_mode=mode, crop_values=new_values,
+        )
+        prev_loading, self._loading = self._loading, True
+        prev_suppress, self._suppress_crop_sync = self._suppress_crop_sync, True
+        try:
+            self.crop_mode_var.set(mode)
+            if mode == "margins":
+                self.crop_l_var.set(str(new_values[0]))
+                self.crop_t_var.set(str(new_values[1]))
+                self.crop_r_var.set(str(new_values[2]))
+                self.crop_b_var.set(str(new_values[3]))
+            else:
+                self.crop_l_var.set(str(new_l))
+                self.crop_t_var.set(str(new_t))
+                self.crop_r_var.set(str(new_r))
+                self.crop_b_var.set(str(new_b))
+            self.crop_w_var.set(str(max(1, w)))
+            self.crop_h_var.set(str(max(1, h)))
+            self.crop_a_var.set(self._format_aspect(w, h))
         finally:
             self._loading = prev_loading
             self._suppress_crop_sync = prev_suppress

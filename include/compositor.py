@@ -133,8 +133,16 @@ def build_composite(
         raise FileNotFoundError(f"Base image not found: {base_path}")
     base = Image.open(base_path).convert("RGBA")
 
+    pad = brand_cfg.get("phone_padding") or {}
+    pad_t = max(0, int(pad.get("top") or 0)) if isinstance(pad, dict) else 0
+    pad_r = max(0, int(pad.get("right") or 0)) if isinstance(pad, dict) else 0
+    pad_b = max(0, int(pad.get("bottom") or 0)) if isinstance(pad, dict) else 0
+    pad_l = max(0, int(pad.get("left") or 0)) if isinstance(pad, dict) else 0
+    canvas_w = base.width + pad_l + pad_r
+    canvas_h = base.height + pad_t + pad_b
+
     bg_color = brand_cfg.get("background_color", [0, 0, 0, 0])
-    canvas = Image.new("RGBA", base.size, tuple(bg_color))
+    canvas = Image.new("RGBA", (canvas_w, canvas_h), tuple(bg_color))
 
     bg_image_rel = brand_cfg.get("background_image")
     if bg_image_rel:
@@ -142,7 +150,7 @@ def build_composite(
         if not bg_path.is_file():
             raise FileNotFoundError(f"Background image not found: {bg_path}")
         bg = Image.open(bg_path).convert("RGBA")
-        tw, th = base.size
+        tw, th = canvas_w, canvas_h
 
         bg_off = shot_cfg.get("background_offset")
         off_left = int(bg_off.get("left") or 0) if isinstance(bg_off, dict) else 0
@@ -164,7 +172,8 @@ def build_composite(
             if l > 0 or t > 0:
                 bg = bg.crop((l, t, bg.width, bg.height))
 
-            scale = max(tw / bg.width, th / bg.height)
+            bg_scale = float(brand_cfg.get("background_scale") or 1.0)
+            scale = max(tw / bg.width, th / bg.height) * bg_scale
             new_size = (max(1, int(round(bg.width * scale))),
                         max(1, int(round(bg.height * scale))))
             bg = bg.resize(new_size, Image.LANCZOS)
@@ -188,15 +197,20 @@ def build_composite(
 
     warped = warp_to_quad(screenshot, base.size, quad)
 
-    # Screenshot goes BEHIND the base (so transparent display reveals it).
-    canvas.alpha_composite(warped)
-    canvas.alpha_composite(base)
+    # Build the phone composite (warp + base + stamps + labels) on a base-sized
+    # intermediate so stamp/label positions stay in base-image coordinates,
+    # then paste it onto the padded canvas at (pad_l, pad_t).
+    phone_canvas = Image.new("RGBA", base.size, (0, 0, 0, 0))
+    phone_canvas.alpha_composite(warped)
+    phone_canvas.alpha_composite(base)
 
     for stamp_cfg in shot_cfg.get("stamps", []) or []:
-        _apply_stamp(canvas, stamp_cfg, assets_dir)
+        _apply_stamp(phone_canvas, stamp_cfg, assets_dir)
 
     for label in shot_cfg.get("labels", []) or []:
-        _draw_label(canvas, label, assets_dir)
+        _draw_label(phone_canvas, label, assets_dir)
+
+    canvas.alpha_composite(phone_canvas, dest=(pad_l, pad_t))
 
     # Post-process: shot-level overrides brand-level entirely if present.
     pp_cfg = shot_cfg.get("post_process", brand_cfg.get("post_process"))

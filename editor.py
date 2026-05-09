@@ -512,9 +512,30 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     root = tk.Tk()
+    _set_app_name(root, APP_NAME)
     EditorApp(root, config_path, assets_dir)
     root.mainloop()
     return 0
+
+
+def _set_app_name(root: tk.Tk, name: str) -> None:
+    """Make the OS taskbar/dock/menu show `name` instead of 'Python'."""
+    try:
+        root.tk.call("tk", "appname", name)
+    except tk.TclError:
+        pass
+    if sys.platform == "darwin":
+        # macOS menu bar shows CFBundleName for non-bundled apps. Patch it
+        # via Foundation if pyobjc is available; silently skip otherwise.
+        try:
+            from Foundation import NSBundle  # type: ignore
+            bundle = NSBundle.mainBundle()
+            info = bundle.localizedInfoDictionary() or bundle.infoDictionary()
+            if info is not None:
+                info["CFBundleName"] = name
+                info["CFBundleDisplayName"] = name
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

@@ -56,6 +56,8 @@ def update_brand(
     phone: str | None = None,
     background_color: list[int] | None = None,
     background_image: str | None = None,
+    background_scale: float | None = None,
+    phone_padding: dict | None = None,
     output_size: list[int] | None = None,
 ) -> None:
     """Update one brand's top-level fields. Pass None to remove a key."""
@@ -67,6 +69,8 @@ def update_brand(
         brand["phone"] = phone
     _set_or_remove(brand, "background_color", background_color)
     _set_or_remove(brand, "background_image", background_image)
+    _set_or_remove(brand, "background_scale", background_scale)
+    _set_or_remove(brand, "phone_padding", phone_padding)
     _set_or_remove(brand, "output_size", output_size)
 
 

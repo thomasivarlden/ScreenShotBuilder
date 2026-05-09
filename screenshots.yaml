@@ -397,9 +397,25 @@ brands:
               - 150
               - 3438
               - 5308
+          resize:
+            width: 1320
+            height: 2868
       - source: screenshots/fishy/IMG_3698.PNG
         output: 04_IMG_3698.png
-        phone: b4
+        phone: b3
         labels: []
         stamps: []
-    background_image: phones/bg.jpg
+        post_process:
+          crop:
+            box:
+              - 2024
+              - 0
+              - 4527
+              - 5430
+          resize:
+            width: 1320
+            height: 2868
+    background_image: backgrounds/gray_waves.png
+    background_scale: 1.2
+    phone_padding:
+      top: 640
