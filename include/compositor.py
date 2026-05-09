@@ -142,15 +142,36 @@ def build_composite(
         if not bg_path.is_file():
             raise FileNotFoundError(f"Background image not found: {bg_path}")
         bg = Image.open(bg_path).convert("RGBA")
-        # Cover-fit: scale so bg fills base.size, then center-crop.
         tw, th = base.size
-        scale = max(tw / bg.width, th / bg.height)
-        new_size = (max(1, int(round(bg.width * scale))), max(1, int(round(bg.height * scale))))
-        bg = bg.resize(new_size, Image.LANCZOS)
-        left = (bg.width - tw) // 2
-        top = (bg.height - th) // 2
-        bg = bg.crop((left, top, left + tw, top + th))
-        canvas.alpha_composite(bg)
+
+        bg_off = shot_cfg.get("background_offset")
+        off_left = int(bg_off.get("left") or 0) if isinstance(bg_off, dict) else 0
+        off_top = int(bg_off.get("top") or 0) if isinstance(bg_off, dict) else 0
+
+        # Skip `off_left` source columns and `off_top` source rows from the
+        # bg image, then cover-fit the remainder to the canvas. This keeps
+        # the bg filling the canvas at all offsets, just panned into the
+        # source image.
+        l = max(0, off_left)
+        t = max(0, off_top)
+        rem_w = bg.width - l
+        rem_h = bg.height - t
+        # If the offset eats too much of the source, the cover-fit would
+        # blow up the remaining sliver to a huge image and freeze the UI.
+        # Require at least 16 px on each axis; otherwise skip the bg and
+        # let `background_color` show through.
+        if rem_w >= 16 and rem_h >= 16:
+            if l > 0 or t > 0:
+                bg = bg.crop((l, t, bg.width, bg.height))
+
+            scale = max(tw / bg.width, th / bg.height)
+            new_size = (max(1, int(round(bg.width * scale))),
+                        max(1, int(round(bg.height * scale))))
+            bg = bg.resize(new_size, Image.LANCZOS)
+            cl = (bg.width - tw) // 2
+            ct = (bg.height - th) // 2
+            bg = bg.crop((cl, ct, cl + tw, ct + th))
+            canvas.alpha_composite(bg)
 
     shot_path = assets_dir / shot_cfg["source"]
     if not shot_path.is_file():

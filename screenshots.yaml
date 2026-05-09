@@ -36,7 +36,6 @@ phones:
       bottom_left:
         - 492
         - 854
-
   a1:
     base_image: phones/a1.png   # 7240 x 5430
     screen_corners:
@@ -95,10 +94,18 @@ phones:
   b4:
     base_image: phones/b4.png
     screen_corners:
-      top_left: [2610, 1195]
-      top_right: [4015, 1255]
-      bottom_right: [3920, 4330]
-      bottom_left: [2460, 4270]
+      top_left:
+        - 2566
+        - 1100
+      top_right:
+        - 4071
+        - 1268
+      bottom_right:
+        - 3780
+        - 4475
+      bottom_left:
+        - 2245
+        - 4361
 
   b5:
     base_image: phones/b5.png
@@ -190,26 +197,51 @@ phones:
   Android_Plain_0:
     base_image: phones/Android_Plain_0.png   # 5016 x 5016 (square)
     screen_corners:
-      top_left: [1760, 760]
-      top_right: [3260, 760]
-      bottom_right: [3260, 4260]
-      bottom_left: [1760, 4260]
+      top_left:
+        - 1590
+        - 387
+      top_right:
+        - 3424
+        - 387
+      bottom_right:
+        - 3422
+        - 4565
+      bottom_left:
+        - 1585
+        - 4565
 
   Android_Plain_1:
     base_image: phones/Android_Plain_1.png   # 4344 x 5792
     screen_corners:
-      top_left: [650, 430]
-      top_right: [3690, 430]
-      bottom_right: [3690, 5360]
-      bottom_left: [650, 5360]
+      top_left:
+        - 1313
+        - 514
+      top_right:
+        - 3133
+        - 463
+      bottom_right:
+        - 3139
+        - 5195
+      bottom_left:
+        - 1286
+        - 5130
 
   Android_Plain_2:
     base_image: phones/Android_Plain_2.png   # 4344 x 5792
     screen_corners:
-      top_left: [650, 430]
-      top_right: [3690, 430]
-      bottom_right: [3690, 5360]
-      bottom_left: [650, 5360]
+      top_left:
+        - 1321
+        - 668
+      top_right:
+        - 2986
+        - 433
+      bottom_right:
+        - 2989
+        - 5221
+      bottom_left:
+        - 1316
+        - 5028
+    corner_radius: 64
 
   iPhone_Plain_0:
     base_image: phones/iPhone_Plain_0.png    # 5016 x 5016 (square)
@@ -230,18 +262,36 @@ phones:
   iPhone_Plain_1:
     base_image: phones/iPhone_Plain_1.png    # 4488 x 5608
     screen_corners:
-      top_left: [675, 420]
-      top_right: [3815, 420]
-      bottom_right: [3815, 5190]
-      bottom_left: [675, 5190]
+      top_left:
+        - 1279
+        - 371
+      top_right:
+        - 3258
+        - 454
+      bottom_right:
+        - 3247
+        - 5012
+      bottom_left:
+        - 1263
+        - 5080
+    corner_radius: 250
 
   iPhone_Plain_2:
     base_image: phones/iPhone_Plain_2.png    # 4488 x 5608
     screen_corners:
-      top_left: [675, 420]
-      top_right: [3815, 420]
-      bottom_right: [3815, 5190]
-      bottom_left: [675, 5190]
+      top_left:
+        - 1514
+        - 423
+      top_right:
+        - 3164
+        - 621
+      bottom_right:
+        - 3159
+        - 4908
+      bottom_left:
+        - 1504
+        - 5090
+    corner_radius: 250
 
 brands:
 
@@ -300,11 +350,56 @@ brands:
             shadow_color: "#00000055"
             shadow_offset: [10, 10]
             anchor: "mm"
+        stamps: []
   Fishy:
     phone: iPhone_Plain_0
     screenshots:
       - source: screenshots/fishy/IMG_3698.PNG
         output: 03_IMG_3698.png
+        labels: []
+        stamps: []
+        phone: iPhone_Plain_1
+        post_process:
+          crop:
+            box:
+              - 1017
+              - 175
+              - 3391
+              - 5336
+          resize:
+            width: 1320
+            height: 2868
+      - source: screenshots/fishy/IMG_3693.PNG
+        output: 02_IMG_3693.png
+        phone: iPhone_Plain_0
+        labels: []
+        stamps: []
+        post_process:
+          crop:
+            box:
+              - 1353
+              - 0
+              - 3656
+              - 5007
+          resize:
+            width: 1320
+            height: 2868
+      - source: /Users/thomas/Library/CloudStorage/GoogleDrive-info@fishytech.biz/Min enhet/Grafiskt Material/Appgrafik 
+          2026/Screenshots/IMG_3701.PNG
+        output: 03_IMG_3696.png
+        phone: iPhone_Plain_2
+        labels: []
+        stamps: []
+        post_process:
+          crop:
+            box:
+              - 1060
+              - 150
+              - 3438
+              - 5308
       - source: screenshots/fishy/IMG_3698.PNG
-        output: 02_IMG_3698.png
+        output: 04_IMG_3698.png
+        phone: b4
+        labels: []
+        stamps: []
     background_image: phones/bg.jpg

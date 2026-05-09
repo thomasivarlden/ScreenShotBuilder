@@ -193,6 +193,95 @@ def delete_stamp(data: Any, brand: str, shot_index: int, stamp_index: int) -> No
         del stamps[stamp_index]
 
 
+def update_bg_offset(
+    data: Any, brand: str, shot_index: int, *,
+    top: int | None = None, left: int | None = None,
+) -> None:
+    """Set the per-output `background_offset: {top, left}` block.
+
+    Each value is in source-pixel coordinates of the brand's background
+    image. The compositor uses (left, top) as the upper-left of the
+    canvas-sized window cropped from the bg. Pass 0 to clear that side;
+    if both end up empty the whole block is removed.
+    """
+    shot = _shot(data, brand, shot_index)
+    bg = shot.get("background_offset")
+    if not isinstance(bg, dict):
+        bg = CommentedMap()
+    # Drop any legacy 'bottom' key from earlier iterations of this feature.
+    bg.pop("bottom", None)
+
+    if top is not None:
+        if top > 0:
+            bg["top"] = int(top)
+        else:
+            bg.pop("top", None)
+    if left is not None:
+        if left > 0:
+            bg["left"] = int(left)
+        else:
+            bg.pop("left", None)
+
+    if bg:
+        shot["background_offset"] = bg
+    elif "background_offset" in shot:
+        del shot["background_offset"]
+
+
+def update_post_process(
+    data: Any, brand: str, shot_index: int, *,
+    crop_mode: str | None = None,
+    crop_values: list[int] | None = None,
+    resize_width: int | None = None,
+    resize_height: int | None = None,
+) -> None:
+    """Update an output's `post_process` block.
+
+    crop_mode: "none" | "margins" | "box" | "center" | None (no change)
+    crop_values: 4 ints for margins/box, 2 ints for center. None means clear.
+    resize_width / resize_height: integer or None (None = remove that dim).
+
+    Empty post_process is removed entirely so YAML stays clean.
+    """
+    shot = _shot(data, brand, shot_index)
+    pp = shot.get("post_process")
+    if pp is None or not isinstance(pp, dict):
+        pp = CommentedMap()
+
+    if crop_mode is not None:
+        if crop_mode == "none" or not crop_values:
+            if "crop" in pp:
+                del pp["crop"]
+        else:
+            crop = CommentedMap()
+            crop[crop_mode] = list(crop_values)
+            pp["crop"] = crop
+
+    # Resize: only touch if either dim was passed.
+    rz = pp.get("resize")
+    if resize_width is not None or resize_height is not None:
+        if not isinstance(rz, dict):
+            rz = CommentedMap()
+        if resize_width is not None and resize_width > 0:
+            rz["width"] = int(resize_width)
+        else:
+            rz.pop("width", None)
+        if resize_height is not None and resize_height > 0:
+            rz["height"] = int(resize_height)
+        else:
+            rz.pop("height", None)
+        if rz:
+            pp["resize"] = rz
+        elif "resize" in pp:
+            del pp["resize"]
+
+    # Persist or strip.
+    if pp:
+        shot["post_process"] = pp
+    elif "post_process" in shot:
+        del shot["post_process"]
+
+
 def update_stamp(
     data: Any, brand: str, shot_index: int, stamp_index: int, **fields: Any,
 ) -> None:

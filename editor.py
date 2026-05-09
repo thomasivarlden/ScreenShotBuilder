@@ -88,7 +88,7 @@ class EditorApp:
             self.notebook, self.data, self.assets_dir,
             on_dirty=lambda: self._set_dirty(True),
         )
-        self.notebook.add(brands_tab, text="Brands")
+        self.notebook.add(brands_tab, text="Configuration")
         self.brands_tab = brands_tab
 
         generate_tab = GenerateTab(

@@ -1,32 +1,120 @@
-"""Brands tab — output-centric editor.
+"""Brands tab — three-pane editor (sidebar tree | preview | inspector).
 
-Model: each Brand has 0..N Outputs. An Output is the unit that maps to one
-generated PNG. It bundles:
-  - phone        (which phone template, picked from `phones:` registry)
-  - source       (input screenshot)
-  - output       (output filename)
-  - labels[]     (text overlays — text, position, color, font_size, anchor)
-  - stamps[]     (image overlays — source, position, scale)
+Phase 1 layout:
+  - Left: hierarchical Treeview of  Brand → Output → (Labels/Stamps)
+  - Center: preview area (static placeholder for now; live render is Phase 2)
+  - Right: context-sensitive inspector — only shows controls for the selected
+           object (brand, output, label or stamp)
 
-Brand-level fields apply to every output of the brand: background_color,
-background_image, output_size.
+Keyboard shortcuts:
+  Delete / Backspace : delete the selected tree node
+  ⌘D / Ctrl-D        : duplicate the selected label/stamp
+  Arrow keys         : nudge label/stamp position by 5 px (Shift = 25)
 
-The YAML key for outputs is still `screenshots:` (preserved for backward
-compatibility); per-output `phone:` is new and overrides the brand-level
-`phone:` if present.
+Underlying YAML schema is unchanged from the previous iteration.
 """
 from __future__ import annotations
 
+import sys
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import Any, Callable
 
+from PIL import Image, ImageTk
+
 from . import brand_io
+from .compositor import build_composite
+from .config_loader import resolve_shot_phone
 
 
-SECTION_BG = ""  # default ttk styling
+# ----- dark-ish palette ---------------------------------------------------
 
+C_BG          = "#1e1e22"
+C_PANEL       = "#26262b"
+C_PANEL_ALT   = "#2c2c32"
+C_BORDER      = "#3a3a42"
+C_TEXT        = "#e6e6ea"
+C_TEXT_DIM    = "#9a9aa3"
+C_ACCENT      = "#4ea1ff"
+C_ACCENT_DIM  = "#274a73"
+C_PREVIEW_BG  = "#15151a"
+
+
+def install_dark_theme(root: tk.Misc) -> None:
+    """Apply a dark ttk theme. Idempotent — safe to call multiple times."""
+    style = ttk.Style(root)
+    try:
+        style.theme_use("clam")
+    except tk.TclError:
+        pass
+
+    style.configure(".", background=C_PANEL, foreground=C_TEXT, bordercolor=C_BORDER)
+    style.configure("TFrame", background=C_PANEL)
+    style.configure("TLabel", background=C_PANEL, foreground=C_TEXT)
+    style.configure("Dim.TLabel", background=C_PANEL, foreground=C_TEXT_DIM)
+    style.configure("Heading.TLabel", background=C_PANEL, foreground=C_TEXT,
+                    font=("", 12, "bold"))
+    style.configure("Section.TLabel", background=C_PANEL, foreground=C_TEXT_DIM,
+                    font=("", 10, "bold"))
+    style.configure("TLabelframe", background=C_PANEL, foreground=C_TEXT_DIM,
+                    bordercolor=C_BORDER)
+    style.configure("TLabelframe.Label", background=C_PANEL, foreground=C_TEXT_DIM)
+    style.configure("TButton", background=C_PANEL_ALT, foreground=C_TEXT,
+                    padding=4, borderwidth=1)
+    style.map("TButton",
+              background=[("active", C_ACCENT_DIM), ("pressed", C_ACCENT_DIM)],
+              foreground=[("active", C_TEXT)])
+    style.configure("Accent.TButton", background=C_ACCENT, foreground="#0b1726",
+                    padding=4)
+    style.map("Accent.TButton",
+              background=[("active", "#6cb3ff"), ("pressed", "#6cb3ff")])
+    style.configure("Icon.TButton", padding=(2, 0), font=("", 12))
+    style.configure("TEntry", fieldbackground=C_PANEL_ALT, foreground=C_TEXT,
+                    insertcolor=C_TEXT, bordercolor=C_BORDER)
+    style.configure("TSpinbox", fieldbackground=C_PANEL_ALT, foreground=C_TEXT,
+                    insertcolor=C_TEXT, bordercolor=C_BORDER, arrowcolor=C_TEXT)
+    style.configure("TCombobox", fieldbackground=C_PANEL_ALT, foreground=C_TEXT,
+                    background=C_PANEL_ALT, bordercolor=C_BORDER, arrowcolor=C_TEXT)
+    style.map("TCombobox",
+              fieldbackground=[("readonly", C_PANEL_ALT)],
+              foreground=[("readonly", C_TEXT)])
+    style.configure("TPanedwindow", background=C_BG)
+    style.configure("TSeparator", background=C_BORDER)
+    style.configure("Treeview", background=C_PANEL_ALT, foreground=C_TEXT,
+                    fieldbackground=C_PANEL_ALT, bordercolor=C_BORDER,
+                    rowheight=22)
+    style.map("Treeview",
+              background=[("selected", C_ACCENT_DIM)],
+              foreground=[("selected", C_TEXT)])
+    style.configure("Treeview.Heading", background=C_PANEL, foreground=C_TEXT_DIM)
+    style.configure("TNotebook", background=C_BG, bordercolor=C_BORDER)
+    style.configure("TNotebook.Tab", background=C_PANEL, foreground=C_TEXT_DIM,
+                    padding=(12, 6))
+    style.map("TNotebook.Tab",
+              background=[("selected", C_PANEL_ALT)],
+              foreground=[("selected", C_TEXT)])
+
+
+# ----- node id helpers ----------------------------------------------------
+# Tree IIDs: "brand:Foo", "shot:Foo:0", "label:Foo:0:1", "stamp:Foo:0:2"
+
+def nid_brand(b: str) -> str:                       return f"brand:{b}"
+def nid_shot(b: str, i: int) -> str:                return f"shot:{b}:{i}"
+def nid_labels(b: str, i: int) -> str:              return f"labels:{b}:{i}"
+def nid_stamps(b: str, i: int) -> str:              return f"stamps:{b}:{i}"
+def nid_label(b: str, i: int, j: int) -> str:       return f"label:{b}:{i}:{j}"
+def nid_stamp(b: str, i: int, j: int) -> str:       return f"stamp:{b}:{i}:{j}"
+
+
+def parse_nid(nid: str) -> tuple[str, list[str]]:
+    parts = nid.split(":")
+    return parts[0], parts[1:]
+
+
+# ==========================================================================
+# BrandsTab
+# ==========================================================================
 
 class BrandsTab(ttk.Frame):
     def __init__(
@@ -36,412 +124,272 @@ class BrandsTab(ttk.Frame):
         assets_dir: Path,
         on_dirty: Callable[[], None],
     ) -> None:
+        install_dark_theme(parent)
         super().__init__(parent)
         self.data = data
         self.assets_dir = assets_dir
         self.on_dirty = on_dirty
 
-        self._loading = False
-        self._current_brand: str | None = None
-        self._current_shot_index: int | None = None
-        self._current_label_index: int | None = None
-        self._current_stamp_index: int | None = None
+        # The currently-selected node's logical address.
+        self._sel_kind: str = ""        # "brand"|"shot"|"label"|"stamp"|""
+        self._sel_brand: str | None = None
+        self._sel_shot: int | None = None
+        self._sel_label: int | None = None
+        self._sel_stamp: int | None = None
+
+        self._loading = False           # suppress on-change while populating
+
+        # Preview state.
+        self._preview_image: Image.Image | None = None       # rendered composite (full-res)
+        self._preview_tk: ImageTk.PhotoImage | None = None
+        self._preview_scale: float = 1.0                     # current display scale
+        self._preview_fit: bool = True                       # auto-fit to canvas
+        self._preview_user_zoom: float = 1.0
+        self._render_after_id: str | None = None             # debounce token
+        self._render_token: int = 0                          # cancel-stale-renders
+        self._cur_preview_key: tuple[str, int] | None = None  # (brand, shot_idx)
+        self._preview_origin: tuple[int, int] = (0, 0)
+        self._drag_handle: str | None = None  # "tl"|"tr"|"br"|"bl" or None
 
         self._build_ui()
-        self._refresh_brand_list()
+        self._refresh_tree()
 
     # ===================================================================
     # UI construction
     # ===================================================================
 
     def _build_ui(self) -> None:
+        self.configure(style="TFrame")
+
+        # Top toolbar inside the tab.
+        topbar = ttk.Frame(self, padding=(8, 6))
+        topbar.pack(side="top", fill="x")
+        ttk.Label(topbar, text="Configuration", style="Heading.TLabel").pack(side="left")
+        ttk.Label(topbar,
+                  text="  ·  Brand → Output → Labels/Stamps",
+                  style="Dim.TLabel").pack(side="left")
+
+        # Three-pane horizontal split.
         paned = ttk.Panedwindow(self, orient="horizontal")
-        paned.pack(fill="both", expand=True, padx=8, pady=8)
+        paned.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        self._paned = paned
 
-        # ----- Left: brand list -----
-        left = ttk.Frame(paned)
-        paned.add(left, weight=1)
-        ttk.Label(left, text="Brands", font=("", 11, "bold")).pack(anchor="w")
-        self.brand_list = tk.Listbox(left, exportselection=False, height=24)
-        self.brand_list.pack(fill="both", expand=True, pady=(2, 4))
-        self.brand_list.bind("<<ListboxSelect>>", lambda _e: self._on_select_brand())
-        brand_btns = ttk.Frame(left)
-        brand_btns.pack(fill="x")
-        ttk.Button(brand_btns, text="Add brand…", command=self._add_brand)\
-            .pack(side="left", padx=2)
-        ttk.Button(brand_btns, text="Delete", command=self._delete_brand)\
-            .pack(side="left", padx=2)
+        # ---- Left: tree sidebar (slim) ----
+        sidebar = ttk.Frame(paned, padding=4)
+        paned.add(sidebar, weight=1)
+        self._build_sidebar(sidebar)
 
-        # ----- Right: dense form (no scroll) -----
-        right = ttk.Frame(paned, padding=4)
-        paned.add(right, weight=5)
+        # ---- Center: preview (largest) ----
+        center = ttk.Frame(paned, padding=4)
+        paned.add(center, weight=4)
+        self._build_preview(center)
 
-        self._build_brand_section(right)
-        self._build_outputs_section(right)
+        # ---- Right: inspector ----
+        right_outer = ttk.Frame(paned, padding=4)
+        paned.add(right_outer, weight=3)
+        self._inspector_root = right_outer
+        self._inspector_body: ttk.Frame | None = None
+        self._render_inspector()
 
-    # -------- brand-level fields --------
+        # Set initial sash positions once the paned widget has a real width.
+        self.after_idle(self._set_initial_sashes)
 
-    def _build_brand_section(self, parent: ttk.Frame) -> None:
-        section = ttk.LabelFrame(parent, text="Brand settings (apply to every output)",
-                                 padding=6)
-        section.pack(fill="x", pady=(0, 4))
-        self.brand_section = section
+        # Keyboard shortcuts (active when this tab has focus).
+        self.bind_all("<Delete>", self._on_key_delete)
+        self.bind_all("<BackSpace>", self._on_key_delete)
+        self.bind_all("<Command-d>", self._on_key_duplicate)
+        self.bind_all("<Control-d>", self._on_key_duplicate)
+        for seq, dx, dy in (
+            ("<Left>", -5, 0), ("<Right>", 5, 0),
+            ("<Up>", 0, -5), ("<Down>", 0, 5),
+            ("<Shift-Left>", -25, 0), ("<Shift-Right>", 25, 0),
+            ("<Shift-Up>", 0, -25), ("<Shift-Down>", 0, 25),
+        ):
+            self.bind_all(seq, lambda e, dx=dx, dy=dy: self._on_key_nudge(e, dx, dy))
 
-        # Single horizontal row: [BG color] | [BG image] | [Output W×H]
-        ttk.Label(section, text="BG (RGBA):").pack(side="left")
-        self.bg_vars = [tk.StringVar() for _ in range(4)]
-        for var in self.bg_vars:
-            sb = ttk.Spinbox(section, from_=0, to=255, width=4, textvariable=var,
-                             command=self._on_brand_field_change)
-            sb.pack(side="left", padx=(2, 0))
-            var.trace_add("write", lambda *_a: self._on_brand_field_change())
+    # -------- sidebar --------
 
-        ttk.Separator(section, orient="vertical").pack(side="left", fill="y", padx=8)
+    def _build_sidebar(self, parent: ttk.Frame) -> None:
+        bar = ttk.Frame(parent)
+        bar.pack(fill="x", pady=(0, 4))
+        ttk.Button(bar, text="＋ Brand", command=self._add_brand,
+                   style="Accent.TButton").pack(side="left")
+        ttk.Button(bar, text="＋ Output", command=self._add_output)\
+            .pack(side="left", padx=4)
+        ttk.Button(bar, text="🗑", style="Icon.TButton",
+                   command=self._delete_selected).pack(side="right")
 
-        ttk.Label(section, text="BG image:").pack(side="left")
-        self.bg_image_var = tk.StringVar()
-        self.bg_image_var.trace_add("write", lambda *_a: self._on_brand_field_change())
-        ttk.Entry(section, textvariable=self.bg_image_var, width=24)\
-            .pack(side="left", padx=(2, 2), fill="x", expand=False)
-        ttk.Button(section, text="…", width=2, command=self._browse_bg_image)\
+        tree_frame = ttk.Frame(parent)
+        tree_frame.pack(fill="both", expand=True)
+        self.tree = ttk.Treeview(tree_frame, show="tree", selectmode="browse")
+        vbar = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=vbar.set)
+        self.tree.pack(side="left", fill="both", expand=True)
+        vbar.pack(side="right", fill="y")
+        self.tree.bind("<<TreeviewSelect>>", lambda _e: self._on_tree_select())
+        self.tree.bind("<Double-1>", self._on_tree_double_click)
+
+        # Visual indent for nested levels (Tk default is OK; nothing needed).
+
+    # -------- preview --------
+
+    def _build_preview(self, parent: ttk.Frame) -> None:
+        # Toolbar above the canvas.
+        bar = ttk.Frame(parent); bar.pack(fill="x", pady=(0, 4))
+        ttk.Button(bar, text="−", width=3, command=self._preview_zoom_out)\
             .pack(side="left")
-        ttk.Button(section, text="✕", width=2,
-                   command=lambda: self.bg_image_var.set(""))\
-            .pack(side="left", padx=(2, 0))
+        ttk.Button(bar, text="＋", width=3, command=self._preview_zoom_in)\
+            .pack(side="left", padx=2)
+        ttk.Button(bar, text="Fit", command=self._preview_zoom_fit)\
+            .pack(side="left", padx=4)
+        ttk.Button(bar, text="↻", width=3, command=self._render_preview_now)\
+            .pack(side="left")
+        self.preview_status_var = tk.StringVar(value="")
+        ttk.Label(bar, textvariable=self.preview_status_var,
+                  style="Dim.TLabel").pack(side="left", padx=12)
 
-        ttk.Separator(section, orient="vertical").pack(side="left", fill="y", padx=8)
+        # Scrollable canvas.
+        canvas_wrap = ttk.Frame(parent); canvas_wrap.pack(fill="both", expand=True)
+        canvas_wrap.rowconfigure(0, weight=1); canvas_wrap.columnconfigure(0, weight=1)
+        self.preview_canvas = tk.Canvas(
+            canvas_wrap, bg=C_PREVIEW_BG, highlightthickness=0,
+            xscrollincrement=1, yscrollincrement=1,
+        )
+        vbar = ttk.Scrollbar(canvas_wrap, orient="vertical",
+                             command=self.preview_canvas.yview)
+        hbar = ttk.Scrollbar(canvas_wrap, orient="horizontal",
+                             command=self.preview_canvas.xview)
+        self.preview_canvas.config(xscrollcommand=hbar.set, yscrollcommand=vbar.set)
+        self.preview_canvas.grid(row=0, column=0, sticky="nsew")
+        vbar.grid(row=0, column=1, sticky="ns")
+        hbar.grid(row=1, column=0, sticky="ew")
 
-        ttk.Label(section, text="Out W×H:").pack(side="left")
-        self.out_w_var = tk.StringVar()
-        self.out_h_var = tk.StringVar()
+        # Hint text shown until something is selected.
+        self._preview_hint_id = self.preview_canvas.create_text(
+            300, 200, text="Select an output in the sidebar to preview it.",
+            fill=C_TEXT_DIM, font=("", 14), tags=("preview_text",),
+        )
+        self.preview_canvas.bind("<Configure>", self._on_preview_resize)
+
+        # Mousewheel zoom + pan.
+        self.preview_canvas.bind("<MouseWheel>", self._on_preview_wheel)
+        self.preview_canvas.bind("<Button-4>", lambda e: self._preview_wheel(1, e))
+        self.preview_canvas.bind("<Button-5>", lambda e: self._preview_wheel(-1, e))
+        # B1 either drags a crop handle (if one is under the cursor) or pans.
+        self.preview_canvas.bind("<ButtonPress-1>", self._on_preview_press)
+        self.preview_canvas.bind("<B1-Motion>", self._on_preview_drag)
+        self.preview_canvas.bind("<ButtonRelease-1>", self._on_preview_release)
+        self.preview_canvas.bind("<Motion>", self._on_preview_motion)
+
+    def _set_initial_sashes(self) -> None:
+        """Pin the panes to ~12.5% / 50% / 37.5% (sidebar / preview / inspector).
+
+        That makes the sidebar 25% slimmer than the previous 1:3:2 weights
+        gave it, freeing space for the preview and inspector.
+        """
+        try:
+            self.update_idletasks()
+            w = self._paned.winfo_width()
+        except tk.TclError:
+            return
+        if w <= 50:
+            self.after(50, self._set_initial_sashes)
+            return
+        try:
+            self._paned.sashpos(0, int(w * 0.125))
+            self._paned.sashpos(1, int(w * 0.625))
+        except tk.TclError:
+            pass
+
+    def _on_preview_resize(self, event: tk.Event) -> None:
+        # Recenter the hint text and re-fit if in fit mode.
+        self.preview_canvas.coords("preview_text", event.width // 2, event.height // 2)
+        if self._preview_image is not None and self._preview_fit:
+            self._blit_preview()
+
+    # -------- inspector swap --------
+
+    def _render_inspector(self) -> None:
+        if self._inspector_body is not None:
+            self._inspector_body.destroy()
+        self._inspector_body = ttk.Frame(self._inspector_root)
+        self._inspector_body.pack(fill="both", expand=True)
+        body = self._inspector_body
+
+        kind = self._sel_kind
+        if kind == "brand":
+            self._render_brand_inspector(body)
+        elif kind == "shot":
+            self._render_output_inspector(body)
+        elif kind == "label":
+            self._render_label_inspector(body)
+        elif kind == "stamp":
+            self._render_stamp_inspector(body)
+        else:
+            ttk.Label(body, text="Select a brand or output in the sidebar to edit.",
+                      style="Dim.TLabel", wraplength=240, justify="left")\
+                .pack(padx=12, pady=12, anchor="nw")
+
+    # ===================================================================
+    # Inspector — Brand
+    # ===================================================================
+
+    def _render_brand_inspector(self, body: ttk.Frame) -> None:
+        b = self._sel_brand
+        if not b:
+            return
+        ttk.Label(body, text=f"Brand · {b}", style="Heading.TLabel")\
+            .pack(anchor="w", padx=8, pady=(8, 4))
+
+        brand = self.data["brands"][b]
+
+        # --- Background card ---
+        card = self._card(body, "Background")
+        # color
+        row = ttk.Frame(card); row.pack(fill="x", pady=2)
+        ttk.Label(row, text="Color (RGBA)", width=12).pack(side="left")
+        self.bg_vars = [tk.StringVar() for _ in range(4)]
+        bg = (list(brand.get("background_color") or [0, 0, 0, 0]) + [0, 0, 0, 0])[:4]
+        for var, val in zip(self.bg_vars, bg):
+            var.set(str(int(val)))
+            sb = ttk.Spinbox(row, from_=0, to=255, width=4, textvariable=var,
+                             command=self._on_brand_field_change)
+            sb.pack(side="left", padx=1)
+            var.trace_add("write", lambda *_a: self._on_brand_field_change())
+        # image
+        row = ttk.Frame(card); row.pack(fill="x", pady=2)
+        ttk.Label(row, text="Image", width=12).pack(side="left")
+        self.bg_image_var = tk.StringVar(value=str(brand.get("background_image") or ""))
+        self.bg_image_var.trace_add("write", lambda *_a: self._on_brand_field_change())
+        ttk.Entry(row, textvariable=self.bg_image_var)\
+            .pack(side="left", fill="x", expand=True, padx=2)
+        ttk.Button(row, text="…", style="Icon.TButton", width=2,
+                   command=self._browse_bg_image).pack(side="left")
+        ttk.Button(row, text="✕", style="Icon.TButton", width=2,
+                   command=lambda: self.bg_image_var.set("")).pack(side="left", padx=(2, 0))
+
+        # --- Output size card ---
+        card = self._card(body, "Output size")
+        row = ttk.Frame(card); row.pack(fill="x", pady=2)
+        ttk.Label(row, text="W × H", width=12).pack(side="left")
+        out = brand.get("output_size")
+        self.out_w_var = tk.StringVar(value=str(int(out[0])) if out else "")
+        self.out_h_var = tk.StringVar(value=str(int(out[1])) if out else "")
         for var in (self.out_w_var, self.out_h_var):
             var.trace_add("write", lambda *_a: self._on_brand_field_change())
-        ttk.Entry(section, textvariable=self.out_w_var, width=6)\
-            .pack(side="left", padx=(2, 0))
-        ttk.Label(section, text="×").pack(side="left", padx=2)
-        ttk.Entry(section, textvariable=self.out_h_var, width=6).pack(side="left")
-
-    # -------- outputs --------
-
-    def _build_outputs_section(self, parent: ttk.Frame) -> None:
-        section = ttk.LabelFrame(parent, text="Outputs", padding=6)
-        section.pack(fill="both", expand=True)
-        self.outputs_section = section
-
-        # ---- Outputs list (left) | Selected-output area (right) ----
-        body = ttk.Panedwindow(section, orient="horizontal")
-        body.pack(fill="both", expand=True)
-
-        list_pane = ttk.Frame(body)
-        body.add(list_pane, weight=1)
-
-        list_btns = ttk.Frame(list_pane)
-        list_btns.pack(fill="x", pady=(0, 2))
-        ttk.Button(list_btns, text="Add output…", command=self._add_output)\
-            .pack(side="left", padx=(0, 2))
-        ttk.Button(list_btns, text="Delete", command=self._delete_output)\
-            .pack(side="left")
-
-        self.shot_list = tk.Listbox(list_pane, exportselection=False, height=10)
-        self.shot_list.pack(fill="both", expand=True)
-        self.shot_list.bind("<<ListboxSelect>>", lambda _e: self._on_select_output())
-
-        detail_pane = ttk.Frame(body)
-        body.add(detail_pane, weight=3)
-        self.output_form = detail_pane
-
-        # Per-output identity: one horizontal row.
-        identity = ttk.Frame(detail_pane)
-        identity.pack(fill="x", pady=(0, 4))
-
-        ttk.Label(identity, text="Phone:").pack(side="left")
-        self.phone_var = tk.StringVar()
-        self.phone_combo = ttk.Combobox(identity, textvariable=self.phone_var,
-                                        values=self._phone_names(), state="readonly",
-                                        width=18)
-        self.phone_combo.pack(side="left", padx=(2, 8))
-        self.phone_combo.bind("<<ComboboxSelected>>",
-                              lambda _e: self._on_output_field_change())
-
-        ttk.Label(identity, text="Output:").pack(side="left")
-        self.shot_output_var = tk.StringVar()
-        self.shot_output_var.trace_add("write",
-                                       lambda *_a: self._on_output_field_change())
-        ttk.Entry(identity, textvariable=self.shot_output_var, width=22)\
-            .pack(side="left", padx=(2, 8))
-
-        ttk.Label(identity, text="Source:").pack(side="left")
-        self.shot_source_var = tk.StringVar()
-        self.shot_source_var.trace_add("write",
-                                       lambda *_a: self._on_output_field_change())
-        ttk.Entry(identity, textvariable=self.shot_source_var)\
-            .pack(side="left", padx=(2, 2), fill="x", expand=True)
-        ttk.Button(identity, text="…", width=2, command=self._browse_shot_source)\
-            .pack(side="left")
-
-        # Labels & Stamps side-by-side.
-        sub = ttk.Panedwindow(detail_pane, orient="horizontal")
-        sub.pack(fill="both", expand=True)
-
-        labels_frame = ttk.Frame(sub)
-        sub.add(labels_frame, weight=1)
-        self._build_labels_section(labels_frame)
-
-        stamps_frame = ttk.Frame(sub)
-        sub.add(stamps_frame, weight=1)
-        self._build_stamps_section(stamps_frame)
-
-        # Disable everything until a brand is selected.
-        self._set_form_state("disabled")
-
-    # -------- labels --------
-
-    def _build_labels_section(self, parent: ttk.Frame) -> None:
-        section = ttk.LabelFrame(parent, text="Labels (text overlays)", padding=6)
-        section.pack(fill="both", expand=True)
-        self.labels_section = section
-
-        btns = ttk.Frame(section)
-        btns.pack(fill="x", pady=(0, 2))
-        ttk.Button(btns, text="Add", command=self._add_label).pack(side="left")
-        ttk.Button(btns, text="Delete", command=self._delete_label).pack(side="left", padx=2)
-
-        self.label_list = tk.Listbox(section, exportselection=False, height=5)
-        self.label_list.pack(fill="x")
-        self.label_list.bind("<<ListboxSelect>>", lambda _e: self._on_select_label())
-
-        form = ttk.Frame(section)
-        form.pack(fill="x", pady=(6, 0))
-
-        r = 0
-        ttk.Label(form, text="Text:").grid(row=r, column=0, sticky="w", pady=2)
-        self.label_text_var = tk.StringVar()
-        self.label_text_var.trace_add("write", lambda *_a: self._on_label_field_change())
-        ttk.Entry(form, textvariable=self.label_text_var, width=44)\
-            .grid(row=r, column=1, columnspan=3, sticky="we", pady=2)
-        r += 1
-
-        ttk.Label(form, text="Position (x, y):").grid(row=r, column=0, sticky="w", pady=2)
-        self.label_x_var = tk.StringVar()
-        self.label_y_var = tk.StringVar()
-        for var in (self.label_x_var, self.label_y_var):
-            var.trace_add("write", lambda *_a: self._on_label_field_change())
-        ttk.Entry(form, textvariable=self.label_x_var, width=8)\
-            .grid(row=r, column=1, sticky="w", pady=2)
-        ttk.Entry(form, textvariable=self.label_y_var, width=8)\
-            .grid(row=r, column=2, sticky="w", pady=2)
-        r += 1
-
-        ttk.Label(form, text="Font size:").grid(row=r, column=0, sticky="w", pady=2)
-        self.label_size_var = tk.StringVar()
-        self.label_size_var.trace_add("write",
-                                      lambda *_a: self._on_label_field_change())
-        ttk.Entry(form, textvariable=self.label_size_var, width=8)\
-            .grid(row=r, column=1, sticky="w", pady=2)
-
-        ttk.Label(form, text="Color:").grid(row=r, column=2, sticky="e", pady=2)
-        self.label_color_var = tk.StringVar()
-        self.label_color_var.trace_add("write",
-                                       lambda *_a: self._on_label_field_change())
-        ttk.Entry(form, textvariable=self.label_color_var, width=10)\
-            .grid(row=r, column=3, sticky="w", pady=2)
-        r += 1
-
-        ttk.Label(form, text="Anchor:").grid(row=r, column=0, sticky="w", pady=2)
-        self.label_anchor_var = tk.StringVar()
-        self.label_anchor_combo = ttk.Combobox(
-            form, textvariable=self.label_anchor_var, state="readonly",
-            values=["", "lt", "lm", "lb", "mt", "mm", "mb", "rt", "rm", "rb"],
-            width=6,
-        )
-        self.label_anchor_combo.grid(row=r, column=1, sticky="w", pady=2)
-        self.label_anchor_combo.bind("<<ComboboxSelected>>",
-                                     lambda _e: self._on_label_field_change())
-        ttk.Label(form, text="(blank = top-left)", foreground="#888")\
-            .grid(row=r, column=2, columnspan=2, sticky="w", pady=2)
-        r += 1
-
-        form.columnconfigure(1, weight=0)
-        form.columnconfigure(3, weight=1)
-
-    # -------- stamps --------
-
-    def _build_stamps_section(self, parent: ttk.Frame) -> None:
-        section = ttk.LabelFrame(parent, text="Stamps (image overlays)", padding=6)
-        section.pack(fill="both", expand=True)
-        self.stamps_section = section
-
-        btns = ttk.Frame(section)
-        btns.pack(fill="x", pady=(0, 2))
-        ttk.Button(btns, text="Add…", command=self._add_stamp).pack(side="left")
-        ttk.Button(btns, text="Delete", command=self._delete_stamp).pack(side="left", padx=2)
-
-        self.stamp_list = tk.Listbox(section, exportselection=False, height=5)
-        self.stamp_list.pack(fill="x")
-        self.stamp_list.bind("<<ListboxSelect>>", lambda _e: self._on_select_stamp())
-
-        form = ttk.Frame(section)
-        form.pack(fill="x", pady=(6, 0))
-
-        r = 0
-        ttk.Label(form, text="Source:").grid(row=r, column=0, sticky="w", pady=2)
-        src_frame = ttk.Frame(form)
-        src_frame.grid(row=r, column=1, columnspan=3, sticky="we", pady=2)
-        self.stamp_source_var = tk.StringVar()
-        self.stamp_source_var.trace_add("write",
-                                        lambda *_a: self._on_stamp_field_change())
-        ttk.Entry(src_frame, textvariable=self.stamp_source_var, width=40)\
-            .pack(side="left", fill="x", expand=True)
-        ttk.Button(src_frame, text="Browse…", command=self._browse_stamp_source)\
+        ttk.Entry(row, textvariable=self.out_w_var, width=8).pack(side="left")
+        ttk.Label(row, text="×").pack(side="left", padx=2)
+        ttk.Entry(row, textvariable=self.out_h_var, width=8).pack(side="left")
+        ttk.Label(row, text=" (blank = no resize)", style="Dim.TLabel")\
             .pack(side="left", padx=4)
-        r += 1
 
-        ttk.Label(form, text="Position (x, y):").grid(row=r, column=0, sticky="w", pady=2)
-        self.stamp_x_var = tk.StringVar()
-        self.stamp_y_var = tk.StringVar()
-        for var in (self.stamp_x_var, self.stamp_y_var):
-            var.trace_add("write", lambda *_a: self._on_stamp_field_change())
-        ttk.Entry(form, textvariable=self.stamp_x_var, width=8)\
-            .grid(row=r, column=1, sticky="w", pady=2)
-        ttk.Entry(form, textvariable=self.stamp_y_var, width=8)\
-            .grid(row=r, column=2, sticky="w", pady=2)
-        r += 1
-
-        ttk.Label(form, text="Scale:").grid(row=r, column=0, sticky="w", pady=2)
-        self.stamp_scale_var = tk.StringVar()
-        self.stamp_scale_var.trace_add("write",
-                                       lambda *_a: self._on_stamp_field_change())
-        ttk.Entry(form, textvariable=self.stamp_scale_var, width=8)\
-            .grid(row=r, column=1, sticky="w", pady=2)
-        ttk.Label(form, text="(1.0 = original size)", foreground="#888")\
-            .grid(row=r, column=2, columnspan=2, sticky="w", pady=2)
-
-        form.columnconfigure(3, weight=1)
-
-    # ===================================================================
-    # State helpers
-    # ===================================================================
-
-    def _phone_names(self) -> list[str]:
-        return list((self.data.get("phones") or {}).keys())
-
-    def refresh_phone_choices(self) -> None:
-        self.phone_combo["values"] = self._phone_names()
-
-    def _set_form_state(self, state: str) -> None:
-        for section in (self.brand_section, self.outputs_section):
-            self._walk_state(section, state)
-
-    def _walk_state(self, root: tk.Widget, state: str) -> None:
-        for child in root.winfo_children():
-            cls = child.winfo_class()
-            if cls in ("TEntry", "TSpinbox", "TButton", "Listbox"):
-                try:
-                    child.configure(state=state)
-                except tk.TclError:
-                    pass
-            elif cls == "TCombobox":
-                try:
-                    child.configure(state="readonly" if state == "normal" else "disabled")
-                except tk.TclError:
-                    pass
-            self._walk_state(child, state)
-
-    # ===================================================================
-    # Brand list
-    # ===================================================================
-
-    def _refresh_brand_list(self, *, select: str | None = None) -> None:
-        names = brand_io.list_brand_names(self.data)
-        self.brand_list.delete(0, "end")
-        for n in names:
-            self.brand_list.insert("end", n)
-        if select and select in names:
-            idx = names.index(select)
-            self.brand_list.selection_set(idx)
-            self.brand_list.see(idx)
-            self._on_select_brand()
-        elif names and self._current_brand in names:
-            idx = names.index(self._current_brand)
-            self.brand_list.selection_set(idx)
-        else:
-            self._current_brand = None
-            self._clear_form()
-
-    def _on_select_brand(self) -> None:
-        sel = self.brand_list.curselection()
-        if not sel:
-            return
-        name = self.brand_list.get(sel[0])
-        self._current_brand = name
-        self._load_brand(name)
-
-    def _add_brand(self) -> None:
-        name = simpledialog.askstring("New brand", "Brand name:", parent=self)
-        if not name or not name.strip():
-            return
-        try:
-            brand_io.add_brand(self.data, name.strip())
-        except ValueError as exc:
-            messagebox.showerror("Add brand", str(exc), parent=self)
-            return
-        self.on_dirty()
-        self._refresh_brand_list(select=name.strip())
-
-    def _delete_brand(self) -> None:
-        if not self._current_brand:
-            return
-        name = self._current_brand
-        if not messagebox.askyesno("Delete brand", f"Delete brand {name!r}?", parent=self):
-            return
-        brand_io.delete_brand(self.data, name)
-        self._current_brand = None
-        self.on_dirty()
-        self._refresh_brand_list()
-
-    # ===================================================================
-    # Brand-level form
-    # ===================================================================
-
-    def _load_brand(self, name: str) -> None:
-        brand = self.data["brands"][name]
-        self._loading = True
-        try:
-            bg = list(brand.get("background_color") or [0, 0, 0, 0])
-            bg = (bg + [0, 0, 0, 0])[:4]
-            for var, val in zip(self.bg_vars, bg):
-                var.set(str(int(val)))
-            self.bg_image_var.set(str(brand.get("background_image") or ""))
-            out = brand.get("output_size")
-            if out:
-                self.out_w_var.set(str(int(out[0])))
-                self.out_h_var.set(str(int(out[1])))
-            else:
-                self.out_w_var.set("")
-                self.out_h_var.set("")
-        finally:
-            self._loading = False
-        self._set_form_state("normal")
-        self._refresh_output_list()
-
-    def _clear_form(self) -> None:
-        self._loading = True
-        try:
-            for var in self.bg_vars:
-                var.set("")
-            self.bg_image_var.set("")
-            self.out_w_var.set("")
-            self.out_h_var.set("")
-            self.shot_list.delete(0, "end")
-            self._clear_output_form()
-        finally:
-            self._loading = False
-        self._set_form_state("disabled")
+        # --- Quick action ---
+        ttk.Button(body, text="＋ Add output", style="Accent.TButton",
+                   command=self._add_output).pack(fill="x", padx=8, pady=(8, 4))
 
     def _on_brand_field_change(self) -> None:
-        if self._loading or not self._current_brand:
+        if self._loading or not self._sel_brand:
             return
-
         try:
             bg_color = [int(v.get() or "0") for v in self.bg_vars]
         except ValueError:
@@ -453,21 +401,14 @@ class BrandsTab(ttk.Frame):
 
         out_w = self.out_w_var.get().strip()
         out_h = self.out_h_var.get().strip()
-        output_size: list[int] | None
-        if out_w and out_h:
-            try:
-                output_size = [int(out_w), int(out_h)]
-            except ValueError:
-                output_size = None
-        else:
+        try:
+            output_size = [int(out_w), int(out_h)] if (out_w and out_h) else None
+        except ValueError:
             output_size = None
 
-        # phone is no longer edited at brand level via the UI; preserve whatever
-        # the YAML has by passing nothing (update_brand only writes fields it
-        # sees keyword args for).
         try:
             brand_io.update_brand(
-                self.data, self._current_brand,
+                self.data, self._sel_brand,
                 background_color=bg_color,
                 background_image=bg_image,
                 output_size=output_size,
@@ -475,6 +416,7 @@ class BrandsTab(ttk.Frame):
         except KeyError:
             return
         self.on_dirty()
+        self._schedule_preview_render()
 
     def _browse_bg_image(self) -> None:
         start = self.assets_dir / "phones"
@@ -489,138 +431,820 @@ class BrandsTab(ttk.Frame):
             self.bg_image_var.set(self._relative_to_assets(Path(path)))
 
     # ===================================================================
-    # Outputs
+    # Inspector — Output
     # ===================================================================
 
-    def _refresh_output_list(self, *, select_index: int | None = None) -> None:
-        self.shot_list.delete(0, "end")
-        if not self._current_brand:
+    def _render_output_inspector(self, body: ttk.Frame) -> None:
+        b, i = self._sel_brand, self._sel_shot
+        if b is None or i is None:
             return
-        shots = brand_io.get_screenshots(self.data, self._current_brand)
-        if not shots:
-            self.shot_list.insert("end", "  (no outputs — click Add output… to start)")
-            self.shot_list.itemconfig(0, foreground="#888")
-        for i, s in enumerate(shots):
-            phone = s.get("phone") or "—"
-            src = s.get("source") or ""
-            out = s.get("output") or ""
-            label = f"{i+1:>2}.  [{phone}]  {out or '—'}    ←  {Path(src).name if src else '—'}"
-            self.shot_list.insert("end", label)
-        if select_index is not None and 0 <= select_index < len(shots):
-            self.shot_list.selection_set(select_index)
-            self.shot_list.see(select_index)
-            self._on_select_output()
+        shot = brand_io.get_screenshots(self.data, b)[i]
+
+        ttk.Label(body, text=f"Output · {shot.get('output') or '(unnamed)'}",
+                  style="Heading.TLabel").pack(anchor="w", padx=8, pady=(8, 4))
+        ttk.Label(body, text=f"in brand · {b}", style="Dim.TLabel")\
+            .pack(anchor="w", padx=8)
+
+        # --- Identity card ---
+        card = self._card(body, "Identity")
+
+        row = ttk.Frame(card); row.pack(fill="x", pady=2)
+        ttk.Label(row, text="Phone", width=8).pack(side="left")
+        self.phone_var = tk.StringVar(value=str(shot.get("phone") or ""))
+        self.phone_combo = ttk.Combobox(row, textvariable=self.phone_var,
+                                        values=self._phone_names(), state="readonly",
+                                        width=22)
+        self.phone_combo.pack(side="left", fill="x", expand=True)
+        self.phone_combo.bind("<<ComboboxSelected>>",
+                              lambda _e: self._on_output_field_change())
+
+        row = ttk.Frame(card); row.pack(fill="x", pady=2)
+        ttk.Label(row, text="File", width=8).pack(side="left")
+        self.shot_output_var = tk.StringVar(value=str(shot.get("output") or ""))
+        self.shot_output_var.trace_add(
+            "write", lambda *_a: self._on_output_field_change())
+        ttk.Entry(row, textvariable=self.shot_output_var)\
+            .pack(side="left", fill="x", expand=True)
+
+        row = ttk.Frame(card); row.pack(fill="x", pady=2)
+        ttk.Label(row, text="Source", width=8).pack(side="left")
+        self.shot_source_var = tk.StringVar(value=str(shot.get("source") or ""))
+        self.shot_source_var.trace_add(
+            "write", lambda *_a: self._on_output_field_change())
+        ttk.Entry(row, textvariable=self.shot_source_var)\
+            .pack(side="left", fill="x", expand=True, padx=(0, 2))
+        ttk.Button(row, text="…", style="Icon.TButton", width=2,
+                   command=self._browse_shot_source).pack(side="left")
+
+        # --- BG transform card ---
+        self._build_bg_transform_card(body, shot)
+
+        # --- Output transform card ---
+        self._build_transform_card(body, shot)
+
+        # --- Quick add buttons ---
+        actions = ttk.Frame(body); actions.pack(fill="x", padx=8, pady=(8, 4))
+        ttk.Button(actions, text="＋ Label", command=self._add_label).pack(side="left")
+        ttk.Button(actions, text="＋ Stamp", command=self._add_stamp)\
+            .pack(side="left", padx=4)
+
+        # --- Compact lists with counts (selecting jumps to that node) ---
+        labels = brand_io.get_labels(self.data, b, i)
+        stamps = brand_io.get_stamps(self.data, b, i)
+
+        ttk.Label(body, text=f"Labels · {len(labels)}", style="Section.TLabel")\
+            .pack(anchor="w", padx=8, pady=(8, 0))
+        if not labels:
+            ttk.Label(body, text="  (none)", style="Dim.TLabel")\
+                .pack(anchor="w", padx=8)
+        for j, lbl in enumerate(labels):
+            row = ttk.Frame(body); row.pack(fill="x", padx=8, pady=1)
+            txt = (str(lbl.get("text") or "")[:28]) or "—"
+            btn = ttk.Button(row, text=f"  {j+1}. {txt}",
+                             command=lambda j=j: self._select(nid_label(b, i, j)))
+            btn.pack(side="left", fill="x", expand=True)
+            ttk.Button(row, text="🗑", style="Icon.TButton", width=2,
+                       command=lambda j=j: self._delete_label_at(j))\
+                .pack(side="left", padx=(2, 0))
+
+        ttk.Label(body, text=f"Stamps · {len(stamps)}", style="Section.TLabel")\
+            .pack(anchor="w", padx=8, pady=(8, 0))
+        if not stamps:
+            ttk.Label(body, text="  (none)", style="Dim.TLabel")\
+                .pack(anchor="w", padx=8)
+        for j, st in enumerate(stamps):
+            row = ttk.Frame(body); row.pack(fill="x", padx=8, pady=1)
+            src = Path(str(st.get("source") or "")).name or "—"
+            btn = ttk.Button(row, text=f"  {j+1}. {src}",
+                             command=lambda j=j: self._select(nid_stamp(b, i, j)))
+            btn.pack(side="left", fill="x", expand=True)
+            ttk.Button(row, text="🗑", style="Icon.TButton", width=2,
+                       command=lambda j=j: self._delete_stamp_at(j))\
+                .pack(side="left", padx=(2, 0))
+
+    # -------- Output transform (crop + resize) --------
+
+    # -------- BG transform (per-output background-image vertical crop) --------
+
+    def _brand_bg_dimensions(self) -> tuple[int, int] | None:
+        """Read the current brand's background_image file size (w, h), or None."""
+        if not self._sel_brand:
+            return None
+        brand = (self.data.get("brands") or {}).get(self._sel_brand)
+        if not brand:
+            return None
+        bg_rel = brand.get("background_image")
+        if not bg_rel:
+            return None
+        bg_path = self.assets_dir / str(bg_rel)
+        if not bg_path.is_file():
+            return None
+        try:
+            with Image.open(bg_path) as im:
+                return (im.width, im.height)
+        except Exception:
+            return None
+
+
+    def _build_bg_transform_card(self, body: ttk.Frame, shot: Any) -> None:
+        bg_dims = self._brand_bg_dimensions()
+        if bg_dims:
+            title = f"BG transform · offset into the {bg_dims[0]}×{bg_dims[1]} background"
         else:
-            self._current_shot_index = None
-            self._clear_output_form()
+            title = "BG transform · (no background image set on brand)"
+        card = self._card(body, title)
 
-    def _on_select_output(self) -> None:
-        sel = self.shot_list.curselection()
-        if not sel or not self._current_brand:
-            return
-        shots = brand_io.get_screenshots(self.data, self._current_brand)
-        if not shots:
-            self.shot_list.selection_clear(0, "end")
-            return
-        idx = sel[0]
-        self._current_shot_index = idx
-        self._load_output(idx)
+        bg_off = shot.get("background_offset") or {}
+        top = int(bg_off.get("top") or 0) if isinstance(bg_off, dict) else 0
+        left = int(bg_off.get("left") or 0) if isinstance(bg_off, dict) else 0
 
-    def _add_output(self) -> None:
-        if not self._current_brand:
-            messagebox.showinfo("Pick a brand first",
-                                "Select a brand on the left before adding an output.",
-                                parent=self)
+        prev_loading, self._loading = self._loading, True
+        try:
+            self.bg_top_var = tk.StringVar(value=str(top) if top else "")
+            self.bg_left_var = tk.StringVar(value=str(left) if left else "")
+        finally:
+            self._loading = prev_loading
+
+        grid = ttk.Frame(card); grid.pack(anchor="w", pady=2)
+        ttk.Label(grid, text="From top:", width=10, anchor="w")\
+            .grid(row=0, column=0, sticky="w", pady=1)
+        ttk.Entry(grid, textvariable=self.bg_top_var, width=8)\
+            .grid(row=0, column=1, sticky="w", padx=(2, 14), pady=1)
+        ttk.Label(grid, text="From left:", width=10, anchor="w")\
+            .grid(row=0, column=2, sticky="w", pady=1)
+        ttk.Entry(grid, textvariable=self.bg_left_var, width=8)\
+            .grid(row=0, column=3, sticky="w", padx=(2, 14), pady=1)
+
+        ttk.Label(card,
+                  text="(left, top) point of the bg that lands at the canvas "
+                       "top-left. No scaling. Blank = use the full image.",
+                  style="Dim.TLabel", wraplength=420)\
+            .pack(anchor="w", pady=(2, 0))
+
+        for var in (self.bg_top_var, self.bg_left_var):
+            var.trace_add("write", lambda *_a: self._on_bg_offset_change())
+
+    def _on_bg_offset_change(self) -> None:
+        if self._loading or self._sel_brand is None or self._sel_shot is None:
             return
-        start = self.assets_dir / "screenshots" / self._current_brand
-        if not start.is_dir():
-            start = self.assets_dir / "screenshots"
-        if not start.is_dir():
-            start = self.assets_dir
-        self.winfo_toplevel().lift()
-        path = filedialog.askopenfilename(
-            title=f"Pick screenshot source for {self._current_brand}",
-            initialdir=str(start),
-            filetypes=[("Images", "*.png *.PNG *.jpg *.jpeg *.JPG"), ("All files", "*.*")],
-            parent=self.winfo_toplevel(),
+
+        def parse(s: str) -> int:
+            s = s.strip()
+            if not s:
+                return 0
+            try:
+                return max(0, int(s))
+            except ValueError:
+                return 0
+
+        top = parse(self.bg_top_var.get())
+        left = parse(self.bg_left_var.get())
+        try:
+            brand_io.update_bg_offset(
+                self.data, self._sel_brand, self._sel_shot,
+                top=top, left=left,
+            )
+        except Exception:
+            return
+        self.on_dirty()
+        # BG transform DOES affect the rendered composite, so re-render.
+        self._schedule_preview_render()
+
+    def _build_transform_card(self, body: ttk.Frame, shot: Any) -> None:
+        card = self._card(body, "Output transform (applied at Generate)")
+
+        pp = shot.get("post_process") or {}
+        crop = pp.get("crop") if isinstance(pp, dict) else None
+        crop_mode = "none"
+        crop_values: list[int] = []
+        if isinstance(crop, dict):
+            for key in ("margins", "box", "center"):
+                if key in crop:
+                    crop_mode = key
+                    crop_values = [int(v) for v in (crop[key] or [])]
+                    break
+        elif isinstance(crop, (list, tuple)):
+            crop_mode = "box"
+            crop_values = [int(v) for v in crop]
+
+        rz = pp.get("resize") if isinstance(pp, dict) else None
+        rz_w = ""
+        rz_h = ""
+        if isinstance(rz, dict):
+            rz_w = str(int(rz["width"])) if rz.get("width") else ""
+            rz_h = str(int(rz["height"])) if rz.get("height") else ""
+        elif isinstance(rz, (list, tuple)) and len(rz) == 2:
+            rz_w, rz_h = str(int(rz[0])), str(int(rz[1]))
+
+        # Suppress trace-fires while we wire StringVars and set initial values.
+        prev_loading, self._loading = self._loading, True
+        try:
+            self.crop_mode_var = tk.StringVar(value=crop_mode)
+            # 7 crop fields. l/t/r/b are canonical for box+margins; w/h are
+            # canonical for center; aspect is always derived/editable.
+            self.crop_l_var = tk.StringVar()
+            self.crop_t_var = tk.StringVar()
+            self.crop_r_var = tk.StringVar()
+            self.crop_b_var = tk.StringVar()
+            self.crop_w_var = tk.StringVar()
+            self.crop_h_var = tk.StringVar()
+            self.crop_a_var = tk.StringVar()
+            if not hasattr(self, "aspect_locked_var"):
+                self.aspect_locked_var = tk.BooleanVar(value=False)
+            self.resize_w_var = tk.StringVar(value=rz_w)
+            self.resize_h_var = tk.StringVar(value=rz_h)
+            self._populate_crop_vars_from_saved(crop_mode, crop_values)
+        finally:
+            self._loading = prev_loading
+        self._suppress_crop_sync = False
+
+        # ---- Crop ----
+        # Header row: [Crop ▾]  <hint text>
+        header = ttk.Frame(card); header.pack(fill="x", pady=2)
+        ttk.Label(header, text="Crop", width=6).pack(side="left")
+        self.crop_combo = ttk.Combobox(
+            header, textvariable=self.crop_mode_var, state="readonly",
+            values=["none", "margins", "box", "center"], width=10,
         )
-        if not path:
+        self.crop_combo.pack(side="left", padx=(2, 6))
+        self.crop_combo.bind("<<ComboboxSelected>>",
+                             lambda _e: self._on_crop_mode_change())
+        self.crop_hint_var = tk.StringVar()
+        ttk.Label(header, textvariable=self.crop_hint_var, style="Dim.TLabel")\
+            .pack(side="left")
+        # Copy/Paste of all numbers in this card (box mode only).
+        self.crop_copy_btn = ttk.Button(
+            header, text="📋", width=2, command=self._copy_transform,
+        )
+        self.crop_paste_btn = ttk.Button(
+            header, text="📥", width=2, command=self._paste_transform,
+        )
+        self.crop_copy_btn.pack(side="right", padx=(2, 0))
+        self.crop_paste_btn.pack(side="right", padx=(2, 0))
+        self._refresh_paste_state()
+
+        # Fields grid — 2 columns, left-aligned, name-keyed for show/hide.
+        fields = ttk.Frame(card); fields.pack(anchor="w", pady=(2, 0))
+        self.crop_field_rows: dict[str, tuple[ttk.Label, ttk.Entry]] = {}
+
+        def add_field(name: str, label: str, var: tk.StringVar,
+                      row: int, col: int, width: int = 8) -> None:
+            lbl = ttk.Label(fields, text=label, width=8, anchor="w")
+            ent = ttk.Entry(fields, textvariable=var, width=width)
+            lbl.grid(row=row, column=col * 2, sticky="w", pady=1)
+            ent.grid(row=row, column=col * 2 + 1, sticky="w", padx=(2, 14), pady=1)
+            self.crop_field_rows[name] = (lbl, ent)
+
+        add_field("l", "Left:",   self.crop_l_var, 0, 0)
+        add_field("t", "Top:",    self.crop_t_var, 0, 1)
+        add_field("r", "Right:",  self.crop_r_var, 1, 0)
+        add_field("b", "Bottom:", self.crop_b_var, 1, 1)
+        add_field("w", "Width:",  self.crop_w_var, 2, 0)
+        add_field("h", "Height:", self.crop_h_var, 2, 1)
+        add_field("a", "Aspect:", self.crop_a_var, 3, 0, width=10)
+        self.aspect_lock_btn = ttk.Checkbutton(
+            fields, text="Lock", variable=self.aspect_locked_var,
+        )
+        self.aspect_lock_btn.grid(row=3, column=2, sticky="w", padx=(2, 0))
+
+        self._apply_crop_mode_layout()
+
+        # Resize row, also a grid: [Resize] W:[__] H:[__]
+        rgrid = ttk.Frame(card); rgrid.pack(fill="x", pady=2)
+        ttk.Label(rgrid, text="Resize", width=6).grid(row=0, column=0, sticky="w")
+        ttk.Label(rgrid, text="W").grid(row=0, column=1, padx=(2, 0))
+        ttk.Entry(rgrid, textvariable=self.resize_w_var, width=6)\
+            .grid(row=0, column=2, padx=(2, 8))
+        ttk.Label(rgrid, text="H").grid(row=0, column=3)
+        ttk.Entry(rgrid, textvariable=self.resize_h_var, width=6)\
+            .grid(row=0, column=4, padx=2)
+        ttk.Label(rgrid, text="(blank = no resize)", style="Dim.TLabel")\
+            .grid(row=0, column=5, padx=6, sticky="w")
+
+        # Wire change traces. Mode change has its own handler. Each crop
+        # field routes through _on_crop_field_changed so we can keep all
+        # seven fields in sync. Resize fields just write directly.
+        self.crop_mode_var.trace_add("write",
+                                     lambda *_a: self._on_transform_field_change())
+        for name, var in (
+            ("l", self.crop_l_var), ("t", self.crop_t_var),
+            ("r", self.crop_r_var), ("b", self.crop_b_var),
+            ("w", self.crop_w_var), ("h", self.crop_h_var),
+            ("a", self.crop_a_var),
+        ):
+            var.trace_add("write",
+                          lambda *_a, n=name: self._on_crop_field_changed(n))
+        for v in (self.resize_w_var, self.resize_h_var):
+            v.trace_add("write", lambda *_a: self._on_transform_field_change())
+
+    # ---- crop layout / sync ----
+
+    _CROP_VISIBLE = {
+        "none":    set(),
+        "margins": {"l", "t", "r", "b", "w", "h", "a"},
+        "box":     {"l", "t", "r", "b", "w", "h", "a"},
+        "center":  {"w", "h", "a"},
+    }
+    _CROP_HINT = {
+        "none":    "",
+        "margins": "px to trim from each edge",
+        "box":     "absolute pixel rectangle to keep",
+        "center":  "size of the centered crop",
+    }
+
+    def _apply_crop_mode_layout(self) -> None:
+        """Show/hide each named field row based on the current crop mode."""
+        mode = self.crop_mode_var.get()
+        visible = self._CROP_VISIBLE.get(mode, set())
+        for name, (lbl, ent) in self.crop_field_rows.items():
+            if name in visible:
+                lbl.grid(); ent.grid()
+            else:
+                lbl.grid_remove(); ent.grid_remove()
+        if hasattr(self, "aspect_lock_btn"):
+            if "a" in visible:
+                self.aspect_lock_btn.grid()
+            else:
+                self.aspect_lock_btn.grid_remove()
+        # Re-pack in fixed order: Copy on the far right, Paste to its left.
+        for btn_attr in ("crop_copy_btn", "crop_paste_btn"):
+            btn = getattr(self, btn_attr, None)
+            if btn is not None:
+                btn.pack_forget()
+                if mode == "box":
+                    btn.pack(side="right", padx=(2, 0))
+        if hasattr(self, "crop_hint_var"):
+            hint = self._CROP_HINT.get(mode, "")
+            self.crop_hint_var.set(f"  · {hint}" if hint else "")
+
+    def _populate_crop_vars_from_saved(self, mode: str, saved: list[int]) -> None:
+        """Initialize the 7 crop StringVars from YAML-loaded values + mode."""
+        # Default canonical state.
+        if self._preview_image is not None:
+            iw, ih = self._preview_image.size
+        else:
+            iw, ih = 1920, 1080
+        if mode in ("margins", "box") and len(saved) == 4:
+            if mode == "margins":
+                ml, mt, mr, mb = saved
+                l, t, r, b = ml, mt, max(ml + 1, iw - mr), max(mt + 1, ih - mb)
+                self.crop_l_var.set(str(ml))
+                self.crop_t_var.set(str(mt))
+                self.crop_r_var.set(str(mr))
+                self.crop_b_var.set(str(mb))
+            else:
+                l, t, r, b = saved
+                self.crop_l_var.set(str(l))
+                self.crop_t_var.set(str(t))
+                self.crop_r_var.set(str(r))
+                self.crop_b_var.set(str(b))
+            w, h = max(1, r - l), max(1, b - t)
+            self.crop_w_var.set(str(w))
+            self.crop_h_var.set(str(h))
+            self.crop_a_var.set(self._format_aspect(w, h))
+        elif mode == "center" and len(saved) == 2:
+            w, h = saved
+            self.crop_w_var.set(str(w))
+            self.crop_h_var.set(str(h))
+            self.crop_a_var.set(self._format_aspect(w, h))
+
+    def _on_crop_field_changed(self, source: str) -> None:
+        if self._loading or self._suppress_crop_sync:
             return
-        source_rel = self._relative_to_assets(Path(path))
-        output_name = self._suggest_output_name(Path(path))
-        # Default phone: brand-level phone if set, else first phone in registry.
-        brand = self.data["brands"][self._current_brand]
-        phones = self._phone_names()
-        default_phone = str(brand.get("phone") or (phones[0] if phones else ""))
-
-        shot = brand_io.add_screenshot(self.data, self._current_brand,
-                                       source=source_rel, output=output_name)
-        if default_phone:
-            shot["phone"] = default_phone
-
-        shots = brand_io.get_screenshots(self.data, self._current_brand)
-        self.on_dirty()
-        self._refresh_output_list(select_index=len(shots) - 1)
-
-    def _delete_output(self) -> None:
-        if not self._current_brand or self._current_shot_index is None:
+        if self._sel_brand is None or self._sel_shot is None:
             return
-        idx = self._current_shot_index
-        if not messagebox.askyesno("Delete output", f"Delete output #{idx + 1}?",
-                                   parent=self):
-            return
-        brand_io.delete_screenshot(self.data, self._current_brand, idx)
-        self._current_shot_index = None
-        self.on_dirty()
-        self._refresh_output_list()
-
-    def _suggest_output_name(self, src: Path) -> str:
-        if not self._current_brand:
-            return src.stem + ".png"
-        existing = brand_io.get_screenshots(self.data, self._current_brand)
-        next_idx = len(existing) + 1
-        return f"{next_idx:02d}_{src.stem}.png"
-
-    # -------- per-output form --------
-
-    def _load_output(self, idx: int) -> None:
-        shots = brand_io.get_screenshots(self.data, self._current_brand)
-        shot = shots[idx]
-        self._loading = True
+        self._suppress_crop_sync = True
         try:
-            self.phone_var.set(str(shot.get("phone") or ""))
-            self.shot_source_var.set(str(shot.get("source") or ""))
-            self.shot_output_var.set(str(shot.get("output") or ""))
+            self._sync_crop_fields(source)
         finally:
-            self._loading = False
-        self._refresh_label_list()
-        self._refresh_stamp_list()
+            self._suppress_crop_sync = False
+        # After all fields are in sync, write the new values to YAML.
+        self._on_transform_field_change()
 
-    def _clear_output_form(self) -> None:
-        self._loading = True
+    def _sync_crop_fields(self, source: str) -> None:
+        """Recompute every crop field from the user-edited one (`source`)."""
+        mode = self.crop_mode_var.get()
+        if mode == "none":
+            return
+
+        if self._preview_image is not None:
+            iw, ih = self._preview_image.size
+        else:
+            iw, ih = 1920, 1080
+
+        def read(var: tk.StringVar, default: int = 0) -> int:
+            s = var.get().strip()
+            if not s:
+                return default
+            try:
+                return int(s)
+            except ValueError:
+                return default
+
+        # Compute canonical (l, t, r, b) absolute pixel rect.
+        if mode == "margins":
+            ml = read(self.crop_l_var, 0)
+            mt = read(self.crop_t_var, 0)
+            mr = read(self.crop_r_var, 0)
+            mb = read(self.crop_b_var, 0)
+            l, t, r, b = ml, mt, iw - mr, ih - mb
+        elif mode == "box":
+            l = read(self.crop_l_var, 0)
+            t = read(self.crop_t_var, 0)
+            r = read(self.crop_r_var, iw)
+            b = read(self.crop_b_var, ih)
+        else:  # center
+            w0 = read(self.crop_w_var, iw)
+            h0 = read(self.crop_h_var, ih)
+            l = (iw - w0) // 2; r = l + max(1, w0)
+            t = (ih - h0) // 2; b = t + max(1, h0)
+
+        # Apply the user's edit (l/t/r/b are already reflected for margins/box).
+        if source == "w":
+            new_w = max(1, read(self.crop_w_var, max(1, r - l)))
+            if mode == "center":
+                cx = (l + r) // 2
+                l = cx - new_w // 2; r = l + new_w
+            else:
+                r = l + new_w
+        elif source == "h":
+            new_h = max(1, read(self.crop_h_var, max(1, b - t)))
+            if mode == "center":
+                cy = (t + b) // 2
+                t = cy - new_h // 2; b = t + new_h
+            else:
+                b = t + new_h
+        elif source == "a":
+            ratio = self._parse_aspect(self.crop_a_var.get())
+            cur_w = max(1, r - l)
+            if ratio is not None:
+                new_h = max(1, int(round(cur_w / ratio)))
+                if mode == "center":
+                    cy = (t + b) // 2
+                    t = cy - new_h // 2; b = t + new_h
+                else:
+                    b = t + new_h
+
+        # Clamp to image bounds.
+        l = max(0, min(iw - 1, l))
+        t = max(0, min(ih - 1, t))
+        r = max(l + 1, min(iw, r))
+        b = max(t + 1, min(ih, b))
+        new_w = r - l
+        new_h = b - t
+
+        # Aspect lock: if engaged, force the box to match the locked ratio.
+        # Width leads when the user touched a width-affecting field; height
+        # leads otherwise. When the user edits 'a' itself, that becomes the
+        # new locked ratio.
+        if (getattr(self, "aspect_locked_var", None) is not None
+                and self.aspect_locked_var.get()):
+            ratio = self._parse_aspect(self.crop_a_var.get())
+            if ratio and ratio > 0:
+                width_leads = source in ("w", "l", "r", "a")
+                if width_leads:
+                    forced_h = max(1, int(round(new_w / ratio)))
+                    if mode == "center":
+                        cy = (t + b) // 2
+                        t = max(0, cy - forced_h // 2)
+                        b = min(ih, t + forced_h); t = max(0, b - forced_h)
+                    else:
+                        b = min(ih, t + forced_h)
+                        t = max(0, b - forced_h)
+                else:
+                    forced_w = max(1, int(round(new_h * ratio)))
+                    if mode == "center":
+                        cx = (l + r) // 2
+                        l = max(0, cx - forced_w // 2)
+                        r = min(iw, l + forced_w); l = max(0, r - forced_w)
+                    else:
+                        r = min(iw, l + forced_w)
+                        l = max(0, r - forced_w)
+                new_w = r - l
+                new_h = b - t
+
+        # Build the desired writeback values, then push to every field
+        # except the one the user is actively editing — that one leads.
+        if mode == "margins":
+            to_write: dict[str, str] = {
+                "l": str(l), "t": str(t),
+                "r": str(iw - r), "b": str(ih - b),
+            }
+        elif mode == "box":
+            to_write = {"l": str(l), "t": str(t), "r": str(r), "b": str(b)}
+        else:
+            to_write = {}
+        to_write["w"] = str(new_w)
+        to_write["h"] = str(new_h)
+        to_write["a"] = self._format_aspect(new_w, new_h)
+
+        vars_by_name = {
+            "l": self.crop_l_var, "t": self.crop_t_var,
+            "r": self.crop_r_var, "b": self.crop_b_var,
+            "w": self.crop_w_var, "h": self.crop_h_var,
+            "a": self.crop_a_var,
+        }
+        for name, value in to_write.items():
+            if name == source:
+                continue  # leave the field with the cursor alone
+            var = vars_by_name[name]
+            if var.get() != value:
+                var.set(value)
+
+    @staticmethod
+    def _parse_aspect(s: str) -> float | None:
+        """Parse '16:9', '1.778', etc. Returns w/h ratio, or None if invalid."""
+        s = s.strip()
+        if not s:
+            return None
+        if ":" in s:
+            parts = s.split(":")
+            if len(parts) != 2:
+                return None
+            try:
+                x, y = float(parts[0]), float(parts[1])
+            except ValueError:
+                return None
+            return (x / y) if y > 0 else None
         try:
-            self.phone_var.set("")
-            self.shot_source_var.set("")
-            self.shot_output_var.set("")
-            self.label_list.delete(0, "end")
-            self.stamp_list.delete(0, "end")
-            self._clear_label_form()
-            self._clear_stamp_form()
+            v = float(s)
+        except ValueError:
+            return None
+        return v if v > 0 else None
+
+    @staticmethod
+    def _format_aspect(w: int, h: int) -> str:
+        if w <= 0 or h <= 0:
+            return ""
+        from math import gcd
+        g = gcd(int(w), int(h))
+        a, b = int(w) // g, int(h) // g
+        # Prefer a clean ratio when it's compact; otherwise fall back to
+        # the decimal so we don't show "1921:1080".
+        if a <= 99 and b <= 99:
+            return f"{a}:{b}"
+        return f"{w / h:.3f}"
+
+    def _on_crop_mode_change(self) -> None:
+        self._apply_crop_mode_layout()
+        # If switching to a real crop mode and the user has no values yet,
+        # populate sensible defaults derived from the preview image size.
+        new_mode = self.crop_mode_var.get()
+        if new_mode != "none":
+            self._populate_default_crop_values(new_mode)
+        self._on_transform_field_change()
+
+    def _populate_default_crop_values(self, mode: str) -> None:
+        """Fill crop fields with sensible defaults if they're empty/zero."""
+        def read(var: tk.StringVar) -> int:
+            try:
+                return int(var.get().strip() or "0")
+            except ValueError:
+                return 0
+        if mode in ("margins", "box"):
+            existing = [read(v) for v in
+                        (self.crop_l_var, self.crop_t_var,
+                         self.crop_r_var, self.crop_b_var)]
+        else:  # center
+            existing = [read(self.crop_w_var), read(self.crop_h_var)]
+        if any(v != 0 for v in existing):
+            return  # user already has something — leave it alone
+
+        if self._preview_image is not None:
+            iw, ih = self._preview_image.size
+        else:
+            iw, ih = 1920, 1080
+
+        prev_loading, self._loading = self._loading, True
+        try:
+            if mode == "margins":
+                m = max(20, min(iw, ih) // 20)
+                self.crop_l_var.set(str(m))
+                self.crop_t_var.set(str(m))
+                self.crop_r_var.set(str(m))
+                self.crop_b_var.set(str(m))
+                w, h = iw - 2 * m, ih - 2 * m
+            elif mode == "box":
+                l, t = iw // 10, ih // 10
+                r, b = iw - l, ih - t
+                self.crop_l_var.set(str(l))
+                self.crop_t_var.set(str(t))
+                self.crop_r_var.set(str(r))
+                self.crop_b_var.set(str(b))
+                w, h = r - l, b - t
+            elif mode == "center":
+                w, h = int(iw * 0.8), int(ih * 0.8)
+                self.crop_w_var.set(str(w))
+                self.crop_h_var.set(str(h))
+            else:
+                return
+            # Always populate derived fields so they're never blank.
+            if mode in ("margins", "box"):
+                self.crop_w_var.set(str(w))
+                self.crop_h_var.set(str(h))
+            self.crop_a_var.set(self._format_aspect(w, h))
         finally:
-            self._loading = False
+            self._loading = prev_loading
+
+    def _clipboard_has_transform(self) -> bool:
+        """Return True if the clipboard looks like something paste can use."""
+        try:
+            raw = (self.clipboard_get() or "").strip()
+        except tk.TclError:
+            return False
+        if not raw:
+            return False
+        import json
+        try:
+            data = json.loads(raw)
+            if isinstance(data, dict) and ("box" in data or "resize" in data):
+                return True
+        except (ValueError, TypeError):
+            pass
+        # Bare CSV fallback: needs at least 4 ints.
+        head = raw.split("|", 1)[0]
+        try:
+            nums = [int(x.strip()) for x in head.split(",")]
+            return len(nums) == 4
+        except ValueError:
+            return False
+
+    def _refresh_paste_state(self) -> None:
+        """Enable/disable the paste button based on clipboard contents.
+        Re-runs every ~700ms while the button still exists."""
+        btn = getattr(self, "crop_paste_btn", None)
+        if btn is None:
+            return
+        try:
+            exists = bool(btn.winfo_exists())
+        except tk.TclError:
+            exists = False
+        if not exists:
+            self.crop_paste_btn = None  # type: ignore[assignment]
+            return
+        btn.state(["!disabled"] if self._clipboard_has_transform() else ["disabled"])
+        self.after(700, self._refresh_paste_state)
+
+    def _copy_transform(self) -> None:
+        """Copy box-mode crop + resize values to the clipboard as JSON."""
+        def read(var: tk.StringVar) -> int | None:
+            s = var.get().strip()
+            if not s:
+                return None
+            try:
+                return int(s)
+            except ValueError:
+                return None
+        payload: dict[str, Any] = {}
+        box = [read(v) for v in (self.crop_l_var, self.crop_t_var,
+                                 self.crop_r_var, self.crop_b_var)]
+        if all(v is not None for v in box):
+            payload["box"] = box
+        rw, rh = read(self.resize_w_var), read(self.resize_h_var)
+        if rw is not None or rh is not None:
+            payload["resize"] = [rw, rh]
+        if not payload:
+            return
+        import json
+        text = json.dumps(payload, separators=(",", ":"))
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        self._refresh_paste_state()
+
+    def _paste_transform(self) -> None:
+        """Read clipboard, parse, and populate box-mode + resize fields."""
+        try:
+            raw = self.clipboard_get()
+        except tk.TclError:
+            return
+        raw = (raw or "").strip()
+        if not raw:
+            return
+        import json
+        box: list[int] | None = None
+        resize: list[int | None] | None = None
+        try:
+            data = json.loads(raw)
+        except (ValueError, TypeError):
+            data = None
+        if isinstance(data, dict):
+            b = data.get("box")
+            if isinstance(b, (list, tuple)) and len(b) == 4:
+                try:
+                    box = [int(x) for x in b]
+                except (TypeError, ValueError):
+                    box = None
+            r = data.get("resize")
+            if isinstance(r, (list, tuple)) and len(r) == 2:
+                resize = [int(x) if x not in (None, "", "null") else None
+                          for x in r]
+        else:
+            # Fallback: bare CSV "l,t,r,b" or "l,t,r,b|w,h"
+            parts = raw.split("|", 1)
+            try:
+                nums = [int(x.strip()) for x in parts[0].split(",")]
+                if len(nums) == 4:
+                    box = nums
+            except ValueError:
+                box = None
+            if len(parts) == 2:
+                try:
+                    rn = [int(x.strip()) for x in parts[1].split(",")]
+                    if len(rn) == 2:
+                        resize = [rn[0] or None, rn[1] or None]
+                except ValueError:
+                    resize = None
+        if box is None and resize is None:
+            return
+
+        prev_loading, self._loading = self._loading, True
+        try:
+            if box is not None:
+                self.crop_mode_var.set("box")
+                self._apply_crop_mode_layout()
+                l, t, r, b_ = box
+                self.crop_l_var.set(str(l))
+                self.crop_t_var.set(str(t))
+                self.crop_r_var.set(str(r))
+                self.crop_b_var.set(str(b_))
+                w, h = max(1, r - l), max(1, b_ - t)
+                self.crop_w_var.set(str(w))
+                self.crop_h_var.set(str(h))
+                self.crop_a_var.set(self._format_aspect(w, h))
+            if resize is not None:
+                self.resize_w_var.set(str(resize[0]) if resize[0] else "")
+                self.resize_h_var.set(str(resize[1]) if resize[1] else "")
+        finally:
+            self._loading = prev_loading
+        # Now persist.
+        self._on_transform_field_change()
+        self._draw_crop_overlay()
+
+    def _on_transform_field_change(self) -> None:
+        if self._loading or self._sel_brand is None or self._sel_shot is None:
+            return
+        # Crop — read canonical fields based on mode.
+        mode = self.crop_mode_var.get()
+        crop_values: list[int] | None
+        if mode == "none":
+            crop_values = None
+        elif mode in ("margins", "box"):
+            try:
+                crop_values = [
+                    int(self.crop_l_var.get() or "0"),
+                    int(self.crop_t_var.get() or "0"),
+                    int(self.crop_r_var.get() or "0"),
+                    int(self.crop_b_var.get() or "0"),
+                ]
+            except ValueError:
+                crop_values = None
+        elif mode == "center":
+            try:
+                crop_values = [
+                    int(self.crop_w_var.get() or "0"),
+                    int(self.crop_h_var.get() or "0"),
+                ]
+            except ValueError:
+                crop_values = None
+        else:
+            crop_values = None
+        # Resize
+        try:
+            rw = int(self.resize_w_var.get()) if self.resize_w_var.get().strip() else None
+        except ValueError:
+            rw = None
+        try:
+            rh = int(self.resize_h_var.get()) if self.resize_h_var.get().strip() else None
+        except ValueError:
+            rh = None
+
+        try:
+            brand_io.update_post_process(
+                self.data, self._sel_brand, self._sel_shot,
+                crop_mode=mode,
+                crop_values=crop_values,
+                resize_width=rw if rw is not None else 0,
+                resize_height=rh if rh is not None else 0,
+            )
+        except Exception:
+            return
+        self.on_dirty()
+        # Crop/resize don't drive a live composite re-render — just refresh
+        # the dotted overlay so the user sees where the crop will land.
+        self._draw_crop_overlay()
 
     def _on_output_field_change(self) -> None:
-        if self._loading or not self._current_brand or self._current_shot_index is None:
+        if self._loading or self._sel_brand is None or self._sel_shot is None:
             return
         brand_io.update_screenshot(
-            self.data, self._current_brand, self._current_shot_index,
+            self.data, self._sel_brand, self._sel_shot,
             source=self.shot_source_var.get().strip(),
             output=self.shot_output_var.get().strip(),
             phone=self.phone_var.get().strip() or None,
         )
         self.on_dirty()
-        idx = self._current_shot_index
-        self._refresh_output_list(select_index=idx)
+        self._refresh_tree(restore=True)
+        self._schedule_preview_render()
 
     def _browse_shot_source(self) -> None:
         start = self.assets_dir / "screenshots"
@@ -635,81 +1259,75 @@ class BrandsTab(ttk.Frame):
             self.shot_source_var.set(self._relative_to_assets(Path(path)))
 
     # ===================================================================
-    # Labels
+    # Inspector — Label
     # ===================================================================
 
-    def _refresh_label_list(self, *, select_index: int | None = None) -> None:
-        self.label_list.delete(0, "end")
-        if (not self._current_brand) or self._current_shot_index is None:
-            self._clear_label_form()
+    def _render_label_inspector(self, body: ttk.Frame) -> None:
+        b, i, j = self._sel_brand, self._sel_shot, self._sel_label
+        labels = brand_io.get_labels(self.data, b, i)
+        if not (0 <= j < len(labels)):
             return
-        labels = brand_io.get_labels(self.data, self._current_brand,
-                                     self._current_shot_index)
-        if not labels:
-            self.label_list.insert("end", "  (no labels)")
-            self.label_list.itemconfig(0, foreground="#888")
-        for i, lbl in enumerate(labels):
-            text = str(lbl.get("text") or "")
-            pos = lbl.get("position") or [0, 0]
-            self.label_list.insert("end",
-                                   f"{i+1}.  {text[:30]}    @ {pos[0]},{pos[1]}")
-        if select_index is not None and 0 <= select_index < len(labels):
-            self.label_list.selection_set(select_index)
-            self.label_list.see(select_index)
-            self._on_select_label()
-        else:
-            self._current_label_index = None
-            self._clear_label_form()
+        lbl = labels[j]
+        ttk.Label(body, text="Label", style="Heading.TLabel")\
+            .pack(anchor="w", padx=8, pady=(8, 0))
+        ttk.Label(body, text=f"in {b} / {brand_io.get_screenshots(self.data, b)[i].get('output') or 'output'}",
+                  style="Dim.TLabel").pack(anchor="w", padx=8, pady=(0, 4))
 
-    def _on_select_label(self) -> None:
-        sel = self.label_list.curselection()
-        if not sel or self._current_shot_index is None:
-            return
-        labels = brand_io.get_labels(self.data, self._current_brand,
-                                     self._current_shot_index)
-        if not labels:
-            self.label_list.selection_clear(0, "end")
-            return
-        idx = sel[0]
-        self._current_label_index = idx
-        lbl = labels[idx]
-        self._loading = True
-        try:
-            self.label_text_var.set(str(lbl.get("text") or ""))
-            pos = lbl.get("position") or [0, 0]
-            self.label_x_var.set(str(int(pos[0])))
-            self.label_y_var.set(str(int(pos[1])))
-            self.label_size_var.set(str(int(lbl.get("font_size") or 48)))
-            self.label_color_var.set(str(lbl.get("color") or ""))
-            self.label_anchor_var.set(str(lbl.get("anchor") or ""))
-        finally:
-            self._loading = False
+        # Text card
+        card = self._card(body, "Text")
+        self.label_text_var = tk.StringVar(value=str(lbl.get("text") or ""))
+        self.label_text_var.trace_add("write", lambda *_a: self._on_label_field_change())
+        ttk.Entry(card, textvariable=self.label_text_var).pack(fill="x", pady=2)
 
-    def _add_label(self) -> None:
-        if self._current_shot_index is None:
-            return
-        brand_io.add_label(self.data, self._current_brand, self._current_shot_index)
-        self.on_dirty()
-        labels = brand_io.get_labels(self.data, self._current_brand,
-                                     self._current_shot_index)
-        self._refresh_label_list(select_index=len(labels) - 1)
+        # Position + size + color card
+        card = self._card(body, "Layout & Style")
 
-    def _delete_label(self) -> None:
-        if (self._current_shot_index is None or self._current_label_index is None):
-            return
-        idx = self._current_label_index
-        if not messagebox.askyesno("Delete label", f"Delete label #{idx + 1}?",
-                                   parent=self):
-            return
-        brand_io.delete_label(self.data, self._current_brand,
-                              self._current_shot_index, idx)
-        self._current_label_index = None
-        self.on_dirty()
-        self._refresh_label_list()
+        row = ttk.Frame(card); row.pack(fill="x", pady=2)
+        ttk.Label(row, text="X, Y", width=8).pack(side="left")
+        pos = lbl.get("position") or [0, 0]
+        self.label_x_var = tk.StringVar(value=str(int(pos[0])))
+        self.label_y_var = tk.StringVar(value=str(int(pos[1])))
+        for v in (self.label_x_var, self.label_y_var):
+            v.trace_add("write", lambda *_a: self._on_label_field_change())
+        ttk.Entry(row, textvariable=self.label_x_var, width=8).pack(side="left", padx=1)
+        ttk.Entry(row, textvariable=self.label_y_var, width=8).pack(side="left", padx=1)
+
+        row = ttk.Frame(card); row.pack(fill="x", pady=2)
+        ttk.Label(row, text="Size", width=8).pack(side="left")
+        self.label_size_var = tk.StringVar(value=str(int(lbl.get("font_size") or 48)))
+        self.label_size_var.trace_add("write",
+                                      lambda *_a: self._on_label_field_change())
+        ttk.Entry(row, textvariable=self.label_size_var, width=8).pack(side="left", padx=1)
+        ttk.Label(row, text="Color", width=6).pack(side="left", padx=(8, 0))
+        self.label_color_var = tk.StringVar(value=str(lbl.get("color") or ""))
+        self.label_color_var.trace_add("write",
+                                       lambda *_a: self._on_label_field_change())
+        ttk.Entry(row, textvariable=self.label_color_var, width=10).pack(side="left", padx=1)
+
+        row = ttk.Frame(card); row.pack(fill="x", pady=2)
+        ttk.Label(row, text="Anchor", width=8).pack(side="left")
+        self.label_anchor_var = tk.StringVar(value=str(lbl.get("anchor") or ""))
+        self.label_anchor_combo = ttk.Combobox(
+            row, textvariable=self.label_anchor_var, state="readonly",
+            values=["", "lt", "lm", "lb", "mt", "mm", "mb", "rt", "rm", "rb"],
+            width=6,
+        )
+        self.label_anchor_combo.pack(side="left", padx=1)
+        self.label_anchor_combo.bind("<<ComboboxSelected>>",
+                                     lambda _e: self._on_label_field_change())
+        ttk.Label(row, text="(blank = top-left)", style="Dim.TLabel")\
+            .pack(side="left", padx=4)
+
+        # Row of actions
+        actions = ttk.Frame(body); actions.pack(fill="x", padx=8, pady=(8, 4))
+        ttk.Button(actions, text="Duplicate",
+                   command=self._duplicate_selected).pack(side="left")
+        ttk.Button(actions, text="Delete", command=self._delete_selected)\
+            .pack(side="left", padx=4)
 
     def _on_label_field_change(self) -> None:
-        if (self._loading or self._current_shot_index is None
-                or self._current_label_index is None):
+        if (self._loading or self._sel_brand is None
+                or self._sel_shot is None or self._sel_label is None):
             return
         try:
             x = int(self.label_x_var.get() or "0")
@@ -724,8 +1342,7 @@ class BrandsTab(ttk.Frame):
         color = self.label_color_var.get().strip() or None
         anchor = self.label_anchor_var.get().strip() or None
         brand_io.update_label(
-            self.data, self._current_brand,
-            self._current_shot_index, self._current_label_index,
+            self.data, self._sel_brand, self._sel_shot, self._sel_label,
             text=self.label_text_var.get(),
             position=[x, y],
             font_size=size,
@@ -733,78 +1350,273 @@ class BrandsTab(ttk.Frame):
             anchor=anchor,
         )
         self.on_dirty()
-        idx = self._current_label_index
-        self._refresh_label_list(select_index=idx)
-
-    def _clear_label_form(self) -> None:
-        self._loading = True
-        try:
-            self.label_text_var.set("")
-            self.label_x_var.set("")
-            self.label_y_var.set("")
-            self.label_size_var.set("")
-            self.label_color_var.set("")
-            self.label_anchor_var.set("")
-        finally:
-            self._loading = False
+        self._refresh_tree(restore=True)
+        # Labels typically get edited character-by-character; a long debounce
+        # avoids re-rendering the composite on every keystroke.
+        self._schedule_preview_render(debounce_ms=700)
 
     # ===================================================================
-    # Stamps
+    # Inspector — Stamp
     # ===================================================================
 
-    def _refresh_stamp_list(self, *, select_index: int | None = None) -> None:
-        self.stamp_list.delete(0, "end")
-        if (not self._current_brand) or self._current_shot_index is None:
-            self._clear_stamp_form()
+    def _render_stamp_inspector(self, body: ttk.Frame) -> None:
+        b, i, j = self._sel_brand, self._sel_shot, self._sel_stamp
+        stamps = brand_io.get_stamps(self.data, b, i)
+        if not (0 <= j < len(stamps)):
             return
-        stamps = brand_io.get_stamps(self.data, self._current_brand,
-                                     self._current_shot_index)
-        if not stamps:
-            self.stamp_list.insert("end", "  (no stamps)")
-            self.stamp_list.itemconfig(0, foreground="#888")
-        for i, st in enumerate(stamps):
-            src = str(st.get("source") or "")
-            pos = st.get("position") or [0, 0]
-            scale = st.get("scale") or 1.0
-            self.stamp_list.insert("end",
-                                   f"{i+1}.  {Path(src).name or '—'}    "
-                                   f"@ {pos[0]},{pos[1]}  ×{scale}")
-        if select_index is not None and 0 <= select_index < len(stamps):
-            self.stamp_list.selection_set(select_index)
-            self.stamp_list.see(select_index)
-            self._on_select_stamp()
-        else:
-            self._current_stamp_index = None
-            self._clear_stamp_form()
+        st = stamps[j]
+        ttk.Label(body, text="Stamp", style="Heading.TLabel")\
+            .pack(anchor="w", padx=8, pady=(8, 0))
+        ttk.Label(body, text=f"in {b} / {brand_io.get_screenshots(self.data, b)[i].get('output') or 'output'}",
+                  style="Dim.TLabel").pack(anchor="w", padx=8, pady=(0, 4))
 
-    def _on_select_stamp(self) -> None:
-        sel = self.stamp_list.curselection()
-        if not sel or self._current_shot_index is None:
+        card = self._card(body, "Source")
+        row = ttk.Frame(card); row.pack(fill="x", pady=2)
+        self.stamp_source_var = tk.StringVar(value=str(st.get("source") or ""))
+        self.stamp_source_var.trace_add(
+            "write", lambda *_a: self._on_stamp_field_change())
+        ttk.Entry(row, textvariable=self.stamp_source_var)\
+            .pack(side="left", fill="x", expand=True, padx=(0, 2))
+        ttk.Button(row, text="…", style="Icon.TButton", width=2,
+                   command=self._browse_stamp_source).pack(side="left")
+
+        card = self._card(body, "Layout")
+        row = ttk.Frame(card); row.pack(fill="x", pady=2)
+        ttk.Label(row, text="X, Y", width=8).pack(side="left")
+        pos = st.get("position") or [0, 0]
+        self.stamp_x_var = tk.StringVar(value=str(int(pos[0])))
+        self.stamp_y_var = tk.StringVar(value=str(int(pos[1])))
+        for v in (self.stamp_x_var, self.stamp_y_var):
+            v.trace_add("write", lambda *_a: self._on_stamp_field_change())
+        ttk.Entry(row, textvariable=self.stamp_x_var, width=8).pack(side="left", padx=1)
+        ttk.Entry(row, textvariable=self.stamp_y_var, width=8).pack(side="left", padx=1)
+
+        row = ttk.Frame(card); row.pack(fill="x", pady=2)
+        ttk.Label(row, text="Scale", width=8).pack(side="left")
+        self.stamp_scale_var = tk.StringVar(value=str(float(st.get("scale") or 1.0)))
+        self.stamp_scale_var.trace_add(
+            "write", lambda *_a: self._on_stamp_field_change())
+        ttk.Entry(row, textvariable=self.stamp_scale_var, width=8).pack(side="left", padx=1)
+        ttk.Label(row, text="(1.0 = original size)", style="Dim.TLabel")\
+            .pack(side="left", padx=4)
+
+        actions = ttk.Frame(body); actions.pack(fill="x", padx=8, pady=(8, 4))
+        ttk.Button(actions, text="Duplicate",
+                   command=self._duplicate_selected).pack(side="left")
+        ttk.Button(actions, text="Delete", command=self._delete_selected)\
+            .pack(side="left", padx=4)
+
+    def _on_stamp_field_change(self) -> None:
+        if (self._loading or self._sel_brand is None
+                or self._sel_shot is None or self._sel_stamp is None):
             return
-        stamps = brand_io.get_stamps(self.data, self._current_brand,
-                                     self._current_shot_index)
-        if not stamps:
-            self.stamp_list.selection_clear(0, "end")
-            return
-        idx = sel[0]
-        self._current_stamp_index = idx
-        st = stamps[idx]
-        self._loading = True
         try:
-            self.stamp_source_var.set(str(st.get("source") or ""))
-            pos = st.get("position") or [0, 0]
-            self.stamp_x_var.set(str(int(pos[0])))
-            self.stamp_y_var.set(str(int(pos[1])))
-            self.stamp_scale_var.set(str(float(st.get("scale") or 1.0)))
-        finally:
-            self._loading = False
+            x = int(self.stamp_x_var.get() or "0")
+            y = int(self.stamp_y_var.get() or "0")
+        except ValueError:
+            return
+        try:
+            scale = float(self.stamp_scale_var.get() or "1.0")
+        except ValueError:
+            scale = 1.0
+        brand_io.update_stamp(
+            self.data, self._sel_brand, self._sel_shot, self._sel_stamp,
+            source=self.stamp_source_var.get().strip(),
+            position=[x, y],
+            scale=scale,
+        )
+        self.on_dirty()
+        self._refresh_tree(restore=True)
+        self._schedule_preview_render()
+
+    def _browse_stamp_source(self) -> None:
+        start = self.assets_dir / "logos"
+        if self._sel_brand:
+            specific = start / self._sel_brand
+            if specific.is_dir():
+                start = specific
+        self.winfo_toplevel().lift()
+        path = filedialog.askopenfilename(
+            title="Select stamp image",
+            initialdir=str(start if start.is_dir() else self.assets_dir),
+            filetypes=[("Images", "*.png *.PNG *.jpg *.jpeg *.JPG"), ("All files", "*.*")],
+            parent=self.winfo_toplevel(),
+        )
+        if path:
+            self.stamp_source_var.set(self._relative_to_assets(Path(path)))
+
+    # ===================================================================
+    # Tree population & navigation
+    # ===================================================================
+
+    def _refresh_tree(self, *, restore: bool = False) -> None:
+        # Remember selected nid + open state to restore.
+        prev_nid = self._current_nid()
+        open_state: dict[str, bool] = {}
+        for iid in self.tree.get_children(""):
+            self._collect_open_state(iid, open_state)
+
+        for iid in self.tree.get_children(""):
+            self.tree.delete(iid)
+
+        for brand_name in brand_io.list_brand_names(self.data):
+            b_iid = nid_brand(brand_name)
+            self.tree.insert("", "end", iid=b_iid, text=f"📁 {brand_name}", open=True)
+            shots = brand_io.get_screenshots(self.data, brand_name)
+            for i, shot in enumerate(shots):
+                phone = shot.get("phone") or "?"
+                out = shot.get("output") or "(unnamed)"
+                s_iid = nid_shot(brand_name, i)
+                self.tree.insert(b_iid, "end", iid=s_iid,
+                                 text=f"🖼 {out}  · [{phone}]", open=False)
+                labels = brand_io.get_labels(self.data, brand_name, i)
+                if labels:
+                    grp = nid_labels(brand_name, i)
+                    self.tree.insert(s_iid, "end", iid=grp,
+                                     text=f"  Labels ({len(labels)})", open=False)
+                    for j, lbl in enumerate(labels):
+                        text = (str(lbl.get("text") or "")[:28]) or "—"
+                        self.tree.insert(grp, "end", iid=nid_label(brand_name, i, j),
+                                         text=f"   T  {text}")
+                stamps = brand_io.get_stamps(self.data, brand_name, i)
+                if stamps:
+                    grp = nid_stamps(brand_name, i)
+                    self.tree.insert(s_iid, "end", iid=grp,
+                                     text=f"  Stamps ({len(stamps)})", open=False)
+                    for j, st in enumerate(stamps):
+                        src = Path(str(st.get("source") or "")).name or "—"
+                        self.tree.insert(grp, "end", iid=nid_stamp(brand_name, i, j),
+                                         text=f"   *  {src}")
+
+        # Restore open state (best effort).
+        for iid, opened in open_state.items():
+            try:
+                self.tree.item(iid, open=opened)
+            except tk.TclError:
+                pass
+
+        # Restore selection if requested + still valid.
+        target = prev_nid if restore else None
+        if target and self.tree.exists(target):
+            self.tree.selection_set(target)
+            self.tree.see(target)
+
+    def _collect_open_state(self, iid: str, out: dict[str, bool]) -> None:
+        out[iid] = bool(self.tree.item(iid, "open"))
+        for child in self.tree.get_children(iid):
+            self._collect_open_state(child, out)
+
+    def _current_nid(self) -> str | None:
+        sel = self.tree.selection()
+        return sel[0] if sel else None
+
+    def _on_tree_select(self) -> None:
+        sel = self.tree.selection()
+        if not sel:
+            self._set_selection("", None, None, None, None)
+            return
+        kind, parts = parse_nid(sel[0])
+        if kind == "brand":
+            self._set_selection("brand", parts[0], None, None, None)
+        elif kind == "shot":
+            self._set_selection("shot", parts[0], int(parts[1]), None, None)
+        elif kind == "labels":
+            # Group node: select the parent shot.
+            self._select(nid_shot(parts[0], int(parts[1])))
+            return
+        elif kind == "stamps":
+            self._select(nid_shot(parts[0], int(parts[1])))
+            return
+        elif kind == "label":
+            self._set_selection("label", parts[0], int(parts[1]), int(parts[2]), None)
+        elif kind == "stamp":
+            self._set_selection("stamp", parts[0], int(parts[1]), None, int(parts[2]))
+
+    def _on_tree_double_click(self, event: tk.Event) -> None:
+        # Toggle open state on double-click for any expandable node.
+        iid = self.tree.identify_row(event.y)
+        if iid and self.tree.get_children(iid):
+            self.tree.item(iid, open=not self.tree.item(iid, "open"))
+
+    def _set_selection(self, kind: str, b: str | None, i: int | None,
+                       lj: int | None, sj: int | None) -> None:
+        self._sel_kind = kind
+        self._sel_brand = b
+        self._sel_shot = i
+        self._sel_label = lj
+        self._sel_stamp = sj
+        self._render_inspector()
+        self._schedule_preview_render()
+
+    def _select(self, nid: str) -> None:
+        if self.tree.exists(nid):
+            self.tree.selection_set(nid)
+            self.tree.see(nid)
+
+    # ===================================================================
+    # Add / Delete / Duplicate operations
+    # ===================================================================
+
+    def _add_brand(self) -> None:
+        name = simpledialog.askstring("New brand", "Brand name:", parent=self)
+        if not name or not name.strip():
+            return
+        try:
+            brand_io.add_brand(self.data, name.strip())
+        except ValueError as exc:
+            messagebox.showerror("Add brand", str(exc), parent=self)
+            return
+        self.on_dirty()
+        self._refresh_tree()
+        self._select(nid_brand(name.strip()))
+
+    def _add_output(self) -> None:
+        b = self._sel_brand or self._first_brand()
+        if b is None:
+            messagebox.showinfo("Add output", "Add a brand first.", parent=self)
+            return
+        start = self.assets_dir / "screenshots" / b
+        if not start.is_dir():
+            start = self.assets_dir / "screenshots"
+        if not start.is_dir():
+            start = self.assets_dir
+        self.winfo_toplevel().lift()
+        path = filedialog.askopenfilename(
+            title=f"Pick screenshot source for {b}",
+            initialdir=str(start),
+            filetypes=[("Images", "*.png *.PNG *.jpg *.jpeg *.JPG"), ("All files", "*.*")],
+            parent=self.winfo_toplevel(),
+        )
+        if not path:
+            return
+        source_rel = self._relative_to_assets(Path(path))
+        brand = self.data["brands"][b]
+        existing = brand_io.get_screenshots(self.data, b)
+        out_name = f"{len(existing) + 1:02d}_{Path(path).stem}.png"
+        phones = self._phone_names()
+        default_phone = str(brand.get("phone") or (phones[0] if phones else ""))
+        shot = brand_io.add_screenshot(self.data, b, source=source_rel, output=out_name)
+        if default_phone:
+            shot["phone"] = default_phone
+        self.on_dirty()
+        self._refresh_tree()
+        self._select(nid_shot(b, len(existing)))
+
+    def _add_label(self) -> None:
+        if self._sel_brand is None or self._sel_shot is None:
+            return
+        brand_io.add_label(self.data, self._sel_brand, self._sel_shot)
+        self.on_dirty()
+        self._refresh_tree()
+        labels = brand_io.get_labels(self.data, self._sel_brand, self._sel_shot)
+        self._select(nid_label(self._sel_brand, self._sel_shot, len(labels) - 1))
 
     def _add_stamp(self) -> None:
-        if self._current_shot_index is None:
+        if self._sel_brand is None or self._sel_shot is None:
             return
         start = self.assets_dir / "logos"
-        if self._current_brand:
-            specific = start / self._current_brand
+        if self._sel_brand:
+            specific = start / self._sel_brand
             if specific.is_dir():
                 start = specific
         if not start.is_dir():
@@ -819,79 +1631,505 @@ class BrandsTab(ttk.Frame):
         if not path:
             return
         rel = self._relative_to_assets(Path(path))
-        brand_io.add_stamp(self.data, self._current_brand,
-                           self._current_shot_index, source=rel)
+        brand_io.add_stamp(self.data, self._sel_brand, self._sel_shot, source=rel)
         self.on_dirty()
-        stamps = brand_io.get_stamps(self.data, self._current_brand,
-                                     self._current_shot_index)
-        self._refresh_stamp_list(select_index=len(stamps) - 1)
+        self._refresh_tree()
+        stamps = brand_io.get_stamps(self.data, self._sel_brand, self._sel_shot)
+        self._select(nid_stamp(self._sel_brand, self._sel_shot, len(stamps) - 1))
 
-    def _delete_stamp(self) -> None:
-        if (self._current_shot_index is None or self._current_stamp_index is None):
+    def _delete_selected(self) -> None:
+        kind = self._sel_kind
+        if kind == "brand" and self._sel_brand:
+            if not messagebox.askyesno("Delete brand",
+                                       f"Delete brand {self._sel_brand!r}?",
+                                       parent=self):
+                return
+            brand_io.delete_brand(self.data, self._sel_brand)
+            self._set_selection("", None, None, None, None)
+        elif kind == "shot" and self._sel_brand is not None and self._sel_shot is not None:
+            if not messagebox.askyesno("Delete output",
+                                       f"Delete output #{self._sel_shot + 1}?",
+                                       parent=self):
+                return
+            brand_io.delete_screenshot(self.data, self._sel_brand, self._sel_shot)
+            self._set_selection("brand", self._sel_brand, None, None, None)
+        elif kind == "label" and self._sel_label is not None:
+            self._delete_label_at(self._sel_label)
             return
-        idx = self._current_stamp_index
-        if not messagebox.askyesno("Delete stamp", f"Delete stamp #{idx + 1}?",
-                                   parent=self):
+        elif kind == "stamp" and self._sel_stamp is not None:
+            self._delete_stamp_at(self._sel_stamp)
             return
-        brand_io.delete_stamp(self.data, self._current_brand,
-                              self._current_shot_index, idx)
-        self._current_stamp_index = None
+        else:
+            return
         self.on_dirty()
-        self._refresh_stamp_list()
+        self._refresh_tree()
 
-    def _on_stamp_field_change(self) -> None:
-        if (self._loading or self._current_shot_index is None
-                or self._current_stamp_index is None):
+    def _delete_label_at(self, j: int) -> None:
+        if self._sel_brand is None or self._sel_shot is None:
             return
-        try:
-            x = int(self.stamp_x_var.get() or "0")
-            y = int(self.stamp_y_var.get() or "0")
-        except ValueError:
+        brand_io.delete_label(self.data, self._sel_brand, self._sel_shot, j)
+        self._set_selection("shot", self._sel_brand, self._sel_shot, None, None)
+        self.on_dirty()
+        self._refresh_tree()
+
+    def _delete_stamp_at(self, j: int) -> None:
+        if self._sel_brand is None or self._sel_shot is None:
             return
+        brand_io.delete_stamp(self.data, self._sel_brand, self._sel_shot, j)
+        self._set_selection("shot", self._sel_brand, self._sel_shot, None, None)
+        self.on_dirty()
+        self._refresh_tree()
+
+    def _duplicate_selected(self) -> None:
+        from copy import deepcopy
+        kind = self._sel_kind
+        if kind == "label" and self._sel_label is not None:
+            labels = brand_io.get_labels(self.data, self._sel_brand, self._sel_shot)
+            labels.append(deepcopy(labels[self._sel_label]))
+            self.on_dirty()
+            self._refresh_tree()
+            self._select(nid_label(self._sel_brand, self._sel_shot, len(labels) - 1))
+        elif kind == "stamp" and self._sel_stamp is not None:
+            stamps = brand_io.get_stamps(self.data, self._sel_brand, self._sel_shot)
+            stamps.append(deepcopy(stamps[self._sel_stamp]))
+            self.on_dirty()
+            self._refresh_tree()
+            self._select(nid_stamp(self._sel_brand, self._sel_shot, len(stamps) - 1))
+
+    # ===================================================================
+    # Keyboard handlers
+    # ===================================================================
+
+    def _is_active(self) -> bool:
+        """Are we the currently-shown notebook tab and is focus not in a text widget?"""
         try:
-            scale = float(self.stamp_scale_var.get() or "1.0")
-        except ValueError:
-            scale = 1.0
-        brand_io.update_stamp(
-            self.data, self._current_brand,
-            self._current_shot_index, self._current_stamp_index,
-            source=self.stamp_source_var.get().strip(),
-            position=[x, y],
-            scale=scale,
+            nb = self.master  # The notebook.
+            if hasattr(nb, "select"):
+                if nb.nametowidget(nb.select()) is not self:
+                    return False
+        except Exception:
+            pass
+        focus = self.focus_get()
+        if isinstance(focus, (tk.Entry, tk.Text, ttk.Entry, ttk.Spinbox, ttk.Combobox)):
+            return False
+        return True
+
+    def _on_key_delete(self, _event: tk.Event) -> None:
+        if not self._is_active():
+            return
+        self._delete_selected()
+
+    def _on_key_duplicate(self, _event: tk.Event) -> None:
+        if not self._is_active():
+            return
+        self._duplicate_selected()
+
+    def _on_key_nudge(self, _event: tk.Event, dx: int, dy: int) -> None:
+        if not self._is_active():
+            return
+        if (self._sel_brand is None or self._sel_shot is None):
+            return
+        if self._sel_kind == "label" and self._sel_label is not None:
+            labels = brand_io.get_labels(self.data, self._sel_brand, self._sel_shot)
+            pos = list(labels[self._sel_label].get("position") or [0, 0])
+            labels[self._sel_label]["position"] = [int(pos[0]) + dx, int(pos[1]) + dy]
+            self.on_dirty()
+            self._render_inspector()
+            self._schedule_preview_render()
+        elif self._sel_kind == "stamp" and self._sel_stamp is not None:
+            stamps = brand_io.get_stamps(self.data, self._sel_brand, self._sel_shot)
+            pos = list(stamps[self._sel_stamp].get("position") or [0, 0])
+            stamps[self._sel_stamp]["position"] = [int(pos[0]) + dx, int(pos[1]) + dy]
+            self.on_dirty()
+            self._render_inspector()
+            self._schedule_preview_render()
+
+    # ===================================================================
+    # Preview render
+    # ===================================================================
+
+    def _preview_target(self) -> tuple[str, int] | None:
+        """Which (brand, shot_idx) should the preview show right now?"""
+        if self._sel_brand is None:
+            return None
+        if self._sel_kind in ("shot", "label", "stamp") and self._sel_shot is not None:
+            return (self._sel_brand, self._sel_shot)
+        if self._sel_kind == "brand":
+            shots = brand_io.get_screenshots(self.data, self._sel_brand)
+            if shots:
+                return (self._sel_brand, 0)
+        return None
+
+    def _schedule_preview_render(self, debounce_ms: int = 250) -> None:
+        if self._render_after_id is not None:
+            try:
+                self.after_cancel(self._render_after_id)
+            except Exception:
+                pass
+            self._render_after_id = None
+        target = self._preview_target()
+        if target is None:
+            self._clear_preview("Select an output in the sidebar to preview it.")
+            return
+        # If we're switching to a different output, render immediately so the
+        # user gets visual feedback for the navigation; otherwise debounce edits.
+        delay = 0 if target != self._cur_preview_key else debounce_ms
+        self._render_after_id = self.after(delay, self._render_preview_now)
+
+    def _render_preview_now(self) -> None:
+        self._render_after_id = None
+        target = self._preview_target()
+        if target is None:
+            self._clear_preview("Select an output in the sidebar to preview it.")
+            return
+        brand_name, shot_idx = target
+        self._cur_preview_key = target
+
+        try:
+            brand_cfg = self.data["brands"][brand_name]
+            shots = brand_io.get_screenshots(self.data, brand_name)
+            if not (0 <= shot_idx < len(shots)):
+                self._clear_preview("(no output)"); return
+            shot = shots[shot_idx]
+            phones = self.data.get("phones") or {}
+            phone_name, phone_cfg = resolve_shot_phone(
+                brand_name, dict(brand_cfg), dict(shot), dict(phones),
+            )
+            merged = {**dict(brand_cfg), **dict(phone_cfg)}
+            # Don't apply output sizing/cropping/resizing to the preview —
+            # crop is shown as a dotted overlay; resize doesn't need a preview.
+            merged.pop("output_size", None)
+            merged.pop("post_process", None)
+            shot = dict(shot)
+            shot.pop("post_process", None)
+        except Exception as exc:
+            self._clear_preview(f"⚠ {exc}")
+            return
+
+        token = self._render_token = self._render_token + 1
+        self.preview_status_var.set("Rendering…")
+        self.update_idletasks()
+
+        try:
+            image = build_composite(merged, shot, self.assets_dir)
+        except Exception as exc:
+            if token != self._render_token:
+                return
+            self._clear_preview(f"⚠ Render failed: {exc}")
+            return
+        if token != self._render_token:
+            return  # a newer render started while we were working
+
+        self._preview_image = image
+        self._blit_preview()
+        self.preview_status_var.set(
+            f"{image.width}×{image.height}  ·  {brand_name} / {shot.get('output') or '?'} [{phone_name or '?'}]"
         )
-        self.on_dirty()
-        idx = self._current_stamp_index
-        self._refresh_stamp_list(select_index=idx)
 
-    def _browse_stamp_source(self) -> None:
-        start = self.assets_dir / "logos"
-        if self._current_brand:
-            specific = start / self._current_brand
-            if specific.is_dir():
-                start = specific
-        self.winfo_toplevel().lift()
-        path = filedialog.askopenfilename(
-            title="Select stamp image",
-            initialdir=str(start if start.is_dir() else self.assets_dir),
-            filetypes=[("Images", "*.png *.PNG *.jpg *.jpeg *.JPG"), ("All files", "*.*")],
-            parent=self.winfo_toplevel(),
-        )
-        if path:
-            self.stamp_source_var.set(self._relative_to_assets(Path(path)))
+    def _blit_preview(self) -> None:
+        img = self._preview_image
+        if img is None:
+            return
+        cw = max(self.preview_canvas.winfo_width(), 1)
+        ch = max(self.preview_canvas.winfo_height(), 1)
+        if self._preview_fit:
+            scale = min(cw / img.width, ch / img.height, 1.0)
+        else:
+            scale = self._preview_user_zoom
+        scale = max(0.05, min(scale, 8.0))
+        self._preview_scale = scale
+        disp_w = max(1, int(img.width * scale))
+        disp_h = max(1, int(img.height * scale))
+        scaled = img.resize((disp_w, disp_h), Image.LANCZOS)
+        self._preview_tk = ImageTk.PhotoImage(scaled)
+        self.preview_canvas.delete("all")
+        # Center the image within the visible viewport.
+        x = max(0, (cw - disp_w) // 2)
+        y = max(0, (ch - disp_h) // 2)
+        self._preview_origin = (x, y)
+        self.preview_canvas.create_image(x, y, anchor="nw", image=self._preview_tk)
+        self.preview_canvas.config(scrollregion=(0, 0, max(cw, disp_w), max(ch, disp_h)))
+        # Dotted crop overlay (driven by the inspector form; no live re-render).
+        self._draw_crop_overlay()
 
-    def _clear_stamp_form(self) -> None:
-        self._loading = True
+    def _draw_crop_overlay(self) -> None:
+        # Always remove any prior overlay first (rect + handles).
+        self.preview_canvas.delete("crop_overlay")
+        self.preview_canvas.delete("crop_handle")
+        if self._preview_image is None:
+            return
+        if self._sel_brand is None or self._sel_shot is None:
+            return
         try:
-            self.stamp_source_var.set("")
-            self.stamp_x_var.set("")
-            self.stamp_y_var.set("")
-            self.stamp_scale_var.set("")
+            shots = brand_io.get_screenshots(self.data, self._sel_brand)
+            shot = shots[self._sel_shot]
+        except Exception:
+            return
+        pp = shot.get("post_process") or {}
+        crop = pp.get("crop") if isinstance(pp, dict) else None
+        if not crop:
+            return
+
+        iw, ih = self._preview_image.size
+        try:
+            box = self._resolve_crop_for_overlay(crop, iw, ih)
+        except Exception:
+            return
+        if box is None:
+            return
+        l, t, r, b = box
+        ox, oy = self._preview_origin
+        s = self._preview_scale
+        cl = ox + l * s
+        ct = oy + t * s
+        cr = ox + r * s
+        cb = oy + b * s
+        self.preview_canvas.create_rectangle(
+            cl, ct, cr, cb,
+            outline="#ffd60a", dash=(6, 4), width=2,
+            tags=("crop_overlay",),
+        )
+        # Four draggable handles, one at each corner.
+        hr = 6  # handle radius (canvas px)
+        for name, (hx, hy) in (
+            ("tl", (cl, ct)),
+            ("tr", (cr, ct)),
+            ("br", (cr, cb)),
+            ("bl", (cl, cb)),
+        ):
+            self.preview_canvas.create_rectangle(
+                hx - hr, hy - hr, hx + hr, hy + hr,
+                fill="#ffd60a", outline="#000000", width=1,
+                tags=("crop_handle", f"crop_handle:{name}"),
+            )
+
+    # -------- handle hit-test + drag --------
+
+    def _hit_handle(self, vx: int, vy: int) -> str | None:
+        """Return the corner tag ('tl'/'tr'/'br'/'bl') under viewport (vx, vy), or None."""
+        cx = self.preview_canvas.canvasx(vx)
+        cy = self.preview_canvas.canvasy(vy)
+        for item in self.preview_canvas.find_overlapping(cx - 2, cy - 2, cx + 2, cy + 2):
+            for tag in self.preview_canvas.gettags(item):
+                if tag.startswith("crop_handle:"):
+                    return tag.split(":", 1)[1]
+        return None
+
+    def _on_preview_press(self, event: tk.Event) -> None:
+        h = self._hit_handle(event.x, event.y)
+        if h is not None:
+            self._drag_handle = h
+            self.preview_canvas.config(cursor="crosshair")
+            return
+        self._drag_handle = None
+        self.preview_canvas.scan_mark(event.x, event.y)
+        self.preview_canvas.config(cursor="fleur")
+
+    def _on_preview_drag(self, event: tk.Event) -> None:
+        if self._drag_handle:
+            self._drag_crop_handle(event.x, event.y)
+        else:
+            self.preview_canvas.scan_dragto(event.x, event.y, gain=1)
+
+    def _on_preview_release(self, _event: tk.Event) -> None:
+        if self._drag_handle is not None:
+            self._drag_handle = None
+        self.preview_canvas.config(cursor="")
+
+    def _on_preview_motion(self, event: tk.Event) -> None:
+        if self._drag_handle is not None:
+            return  # cursor already set during drag
+        self.preview_canvas.config(
+            cursor="crosshair" if self._hit_handle(event.x, event.y) else ""
+        )
+
+    def _drag_crop_handle(self, vx: int, vy: int) -> None:
+        if (self._sel_brand is None or self._sel_shot is None
+                or self._preview_image is None or self._drag_handle is None):
+            return
+        iw, ih = self._preview_image.size
+        ox, oy = self._preview_origin
+        s = self._preview_scale or 1.0
+        cx = self.preview_canvas.canvasx(vx)
+        cy = self.preview_canvas.canvasy(vy)
+        ix = max(0, min(iw, int(round((cx - ox) / s))))
+        iy = max(0, min(ih, int(round((cy - oy) / s))))
+
+        # Read the current box from YAML.
+        shots = brand_io.get_screenshots(self.data, self._sel_brand)
+        shot = shots[self._sel_shot]
+        pp = shot.get("post_process") or {}
+        crop = pp.get("crop") if isinstance(pp, dict) else None
+        box = self._resolve_crop_for_overlay(crop, iw, ih) if crop else (0, 0, iw, ih)
+        if box is None:
+            return
+        l, t, r, b = box
+        h = self._drag_handle
+
+        mode = self.crop_mode_var.get()
+        locked = (getattr(self, "aspect_locked_var", None) is not None
+                  and self.aspect_locked_var.get())
+        ratio = self._parse_aspect(self.crop_a_var.get()) if locked else None
+        if mode == "center":
+            # Resize symmetrically around the image center.
+            cx_img, cy_img = iw // 2, ih // 2
+            new_w = max(2, min(iw, 2 * abs(ix - cx_img)))
+            new_h = max(2, min(ih, 2 * abs(iy - cy_img)))
+            if ratio and ratio > 0:
+                # Width leads, then clamp to image and recompute h from ratio.
+                new_h = max(2, int(round(new_w / ratio)))
+                if new_h > ih:
+                    new_h = ih; new_w = max(2, int(round(new_h * ratio)))
+                if new_w > iw:
+                    new_w = iw; new_h = max(2, int(round(new_w / ratio)))
+            new_values = [new_w, new_h]
+        else:
+            if "t" in h: t = max(0, min(b - 1, iy))
+            if "b" in h: b = max(t + 1, min(ih, iy))
+            if "l" in h: l = max(0, min(r - 1, ix))
+            if "r" in h: r = max(l + 1, min(iw, ix))
+            if ratio and ratio > 0:
+                cur_w = r - l
+                cur_h = b - t
+                # Width leads. Anchor to the side opposite the dragged edge so
+                # the dragged corner stays under the cursor on its leading axis.
+                forced_h = max(1, int(round(cur_w / ratio)))
+                if "t" in h:
+                    t = max(0, b - forced_h)
+                else:
+                    b = min(ih, t + forced_h)
+                # If we ran out of room vertically, pin height and re-derive
+                # width so the box stays inside the image.
+                if b - t != forced_h:
+                    forced_h = b - t
+                    forced_w = max(1, int(round(forced_h * ratio)))
+                    if "l" in h:
+                        l = max(0, r - forced_w)
+                    else:
+                        r = min(iw, l + forced_w)
+            if mode == "margins":
+                new_values = [l, t, iw - r, ih - b]
+            else:  # box (or fallback)
+                if mode != "box":
+                    mode = "box"  # safety
+                new_values = [l, t, r, b]
+
+        # Push to YAML (without retriggering resize), update inspector vars
+        # without firing the sync handler, then redraw the overlay.
+        brand_io.update_post_process(
+            self.data, self._sel_brand, self._sel_shot,
+            crop_mode=mode, crop_values=new_values,
+        )
+        prev_loading, self._loading = self._loading, True
+        prev_suppress, self._suppress_crop_sync = self._suppress_crop_sync, True
+        try:
+            self.crop_mode_var.set(mode)
+            if mode == "margins":
+                self.crop_l_var.set(str(new_values[0]))
+                self.crop_t_var.set(str(new_values[1]))
+                self.crop_r_var.set(str(new_values[2]))
+                self.crop_b_var.set(str(new_values[3]))
+                w_disp = iw - new_values[0] - new_values[2]
+                h_disp = ih - new_values[1] - new_values[3]
+            elif mode == "box":
+                self.crop_l_var.set(str(new_values[0]))
+                self.crop_t_var.set(str(new_values[1]))
+                self.crop_r_var.set(str(new_values[2]))
+                self.crop_b_var.set(str(new_values[3]))
+                w_disp = new_values[2] - new_values[0]
+                h_disp = new_values[3] - new_values[1]
+            else:  # center
+                self.crop_w_var.set(str(new_values[0]))
+                self.crop_h_var.set(str(new_values[1]))
+                w_disp, h_disp = new_values[0], new_values[1]
+            if mode in ("margins", "box"):
+                self.crop_w_var.set(str(max(1, w_disp)))
+                self.crop_h_var.set(str(max(1, h_disp)))
+            self.crop_a_var.set(self._format_aspect(w_disp, h_disp))
         finally:
-            self._loading = False
+            self._loading = prev_loading
+            self._suppress_crop_sync = prev_suppress
+        self.on_dirty()
+        self._draw_crop_overlay()
+
+    @staticmethod
+    def _resolve_crop_for_overlay(crop: Any, iw: int, ih: int) -> tuple[int, int, int, int] | None:
+        if isinstance(crop, (list, tuple)) and len(crop) == 4:
+            return tuple(int(v) for v in crop)  # type: ignore[return-value]
+        if isinstance(crop, dict):
+            if "box" in crop and crop["box"]:
+                v = crop["box"]
+                return (int(v[0]), int(v[1]), int(v[2]), int(v[3]))
+            if "margins" in crop and crop["margins"]:
+                ml, mt, mr, mb = (int(v) for v in crop["margins"])
+                return (ml, mt, max(ml + 1, iw - mr), max(mt + 1, ih - mb))
+            if "center" in crop and crop["center"]:
+                cw, ch = (int(v) for v in crop["center"])
+                if cw <= 0 or ch <= 0:
+                    return None
+                l = max(0, (iw - cw) // 2)
+                t = max(0, (ih - ch) // 2)
+                return (l, t, l + cw, t + ch)
+        return None
+
+    def _clear_preview(self, hint: str) -> None:
+        self._preview_image = None
+        self._preview_tk = None
+        self._cur_preview_key = None
+        self.preview_canvas.delete("all")
+        cw = max(self.preview_canvas.winfo_width(), 1)
+        ch = max(self.preview_canvas.winfo_height(), 1)
+        self.preview_canvas.create_text(
+            cw // 2, ch // 2, text=hint,
+            fill=C_TEXT_DIM, font=("", 14), tags=("preview_text",),
+        )
+        self.preview_status_var.set("")
+
+    # -------- zoom/pan helpers --------
+
+    def _preview_zoom_in(self) -> None:
+        self._preview_fit = False
+        self._preview_user_zoom = min(self._preview_scale * 1.25, 8.0)
+        self._blit_preview()
+
+    def _preview_zoom_out(self) -> None:
+        self._preview_fit = False
+        self._preview_user_zoom = max(self._preview_scale / 1.25, 0.05)
+        self._blit_preview()
+
+    def _preview_zoom_fit(self) -> None:
+        self._preview_fit = True
+        self._blit_preview()
+
+    def _on_preview_wheel(self, event: tk.Event) -> None:
+        direction = 1 if event.delta > 0 else -1
+        self._preview_wheel(direction, event)
+
+    def _preview_wheel(self, direction: int, _event: tk.Event) -> None:
+        if direction > 0:
+            self._preview_zoom_in()
+        else:
+            self._preview_zoom_out()
 
     # ===================================================================
-    # Path helpers
+    # Helpers
     # ===================================================================
+
+    def _phone_names(self) -> list[str]:
+        return list((self.data.get("phones") or {}).keys())
+
+    def refresh_phone_choices(self) -> None:
+        # Inspector is rebuilt on next selection change; nothing to update live.
+        pass
+
+    def _first_brand(self) -> str | None:
+        names = brand_io.list_brand_names(self.data)
+        return names[0] if names else None
+
+    def _card(self, parent: tk.Widget, title: str) -> ttk.Frame:
+        wrap = ttk.LabelFrame(parent, text=title, padding=6)
+        wrap.pack(fill="x", padx=8, pady=4)
+        return wrap
 
     def _relative_to_assets(self, path: Path) -> str:
         try:
