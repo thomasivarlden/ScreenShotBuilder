@@ -327,6 +327,22 @@ class BrandsTab(ttk.Frame):
         self.preview_canvas.bind("<B1-Motion>", self._on_preview_drag)
         self.preview_canvas.bind("<ButtonRelease-1>", self._on_preview_release)
         self.preview_canvas.bind("<Motion>", self._on_preview_motion)
+        self.preview_canvas.bind("<Leave>", self._on_preview_leave)
+
+        # Default cursor + floating coordinate label (child of canvas so
+        # place() coords match event.x/y and canvas.delete("all") leaves it untouched).
+        self.preview_canvas.config(cursor="crosshair")
+        self._coord_label = tk.Label(
+            self.preview_canvas,
+            text="",
+            bg="#1a1a1a",
+            fg="#e8e8e8",
+            font=("Courier", 10),
+            padx=6,
+            pady=3,
+            bd=0,
+            relief="flat",
+        )
 
     def _set_initial_sashes(self) -> None:
         """Pin the panes to ~12.5% / 50% / 37.5% (sidebar / preview / inspector).
@@ -369,9 +385,9 @@ class BrandsTab(ttk.Frame):
         elif kind == "shot":
             self._render_output_inspector(body)
         elif kind == "label":
-            self._render_label_inspector(body)
+            self._render_output_inspector(body)
         elif kind == "stamp":
-            self._render_stamp_inspector(body)
+            self._render_output_inspector(body)
         else:
             ttk.Label(body, text="Select a brand or output in the sidebar to edit.",
                       style="Dim.TLabel", wraplength=240, justify="left")\
@@ -593,7 +609,7 @@ class BrandsTab(ttk.Frame):
             row = ttk.Frame(body); row.pack(fill="x", padx=8, pady=1)
             txt = (str(lbl.get("text") or "")[:28]) or "—"
             btn = ttk.Button(row, text=f"  {j+1}. {txt}",
-                             command=lambda j=j: self._select(nid_label(b, i, j)))
+                             command=lambda j=j: self._open_label_dialog(b, i, j))
             btn.pack(side="left", fill="x", expand=True)
             ttk.Button(row, text="🗑", style="Icon.TButton", width=2,
                        command=lambda j=j: self._delete_label_at(j))\
@@ -608,7 +624,7 @@ class BrandsTab(ttk.Frame):
             row = ttk.Frame(body); row.pack(fill="x", padx=8, pady=1)
             src = Path(str(st.get("source") or "")).name or "—"
             btn = ttk.Button(row, text=f"  {j+1}. {src}",
-                             command=lambda j=j: self._select(nid_stamp(b, i, j)))
+                             command=lambda j=j: self._open_stamp_dialog(b, i, j))
             btn.pack(side="left", fill="x", expand=True)
             ttk.Button(row, text="🗑", style="Icon.TButton", width=2,
                        command=lambda j=j: self._delete_stamp_at(j))\
@@ -1449,6 +1465,294 @@ class BrandsTab(ttk.Frame):
         # avoids re-rendering the composite on every keystroke.
         self._schedule_preview_render(debounce_ms=700)
 
+    def _open_label_dialog(self, b: str, i: int, j: int, is_new: bool = False) -> None:
+        labels = brand_io.get_labels(self.data, b, i)
+        if not (0 <= j < len(labels)):
+            return
+        lbl = labels[j]
+
+        dlg = tk.Toplevel(self.winfo_toplevel())
+        dlg.title("Edit Label")
+        dlg.resizable(False, False)
+        dlg.transient(self.winfo_toplevel())
+        dlg.grab_set()
+
+        outer = ttk.Frame(dlg, padding=12)
+        outer.pack(fill="both", expand=True)
+        outer.columnconfigure(1, weight=1)
+        outer.columnconfigure(3, weight=1)
+
+        # ---- Text ----
+        ttk.Label(outer, text="Text").grid(row=0, column=0, sticky="w", pady=4, padx=(0, 8))
+        text_var = tk.StringVar(value=str(lbl.get("text") or ""))
+        text_entry = ttk.Entry(outer, textvariable=text_var, width=36)
+        text_entry.grid(row=0, column=1, columnspan=3, sticky="ew", pady=4)
+
+        # ---- Position ----
+        pos = lbl.get("position") or [0, 0]
+        ttk.Label(outer, text="X").grid(row=1, column=0, sticky="w", pady=4, padx=(0, 8))
+        x_var = tk.StringVar(value=str(int(pos[0])))
+        ttk.Entry(outer, textvariable=x_var, width=8).grid(row=1, column=1, sticky="w", pady=4)
+        ttk.Label(outer, text="Y").grid(row=1, column=2, sticky="w", pady=4, padx=(8, 4))
+        y_var = tk.StringVar(value=str(int(pos[1])))
+        ttk.Entry(outer, textvariable=y_var, width=8).grid(row=1, column=3, sticky="w", pady=4)
+
+        # ---- Size + Color ----
+        ttk.Label(outer, text="Size").grid(row=2, column=0, sticky="w", pady=4, padx=(0, 8))
+        size_var = tk.StringVar(value=str(int(lbl.get("font_size") or 48)))
+        ttk.Entry(outer, textvariable=size_var, width=8).grid(row=2, column=1, sticky="w", pady=4)
+        ttk.Label(outer, text="Color").grid(row=2, column=2, sticky="w", pady=4, padx=(8, 4))
+        color_var = tk.StringVar(value=str(lbl.get("color") or ""))
+        ttk.Entry(outer, textvariable=color_var, width=12).grid(row=2, column=3, sticky="w", pady=4)
+
+        # ---- Anchor ----
+        ttk.Label(outer, text="Anchor").grid(row=3, column=0, sticky="w", pady=4, padx=(0, 8))
+        anchor_var = tk.StringVar(value=str(lbl.get("anchor") or ""))
+        ttk.Combobox(
+            outer, textvariable=anchor_var, state="readonly",
+            values=["", "lt", "lm", "lb", "mt", "mm", "mb", "rt", "rm", "rb"], width=8,
+        ).grid(row=3, column=1, sticky="w", pady=4)
+        bold_var = tk.BooleanVar(value=bool(lbl.get("bold")))
+        ttk.Checkbutton(outer, text="Bold", variable=bold_var).grid(
+            row=3, column=2, columnspan=2, sticky="w", padx=(8, 0), pady=4)
+
+        # ---- Font ----
+        ttk.Label(outer, text="Font").grid(row=4, column=0, sticky="w", pady=4, padx=(0, 8))
+        font_var = tk.StringVar(value=str(lbl.get("font") or ""))
+        font_row = ttk.Frame(outer)
+        font_row.grid(row=4, column=1, columnspan=3, sticky="ew", pady=4)
+        font_entry = ttk.Entry(font_row, textvariable=font_var)
+        font_entry.pack(side="left", fill="x", expand=True, padx=(0, 4))
+
+        def _browse_font() -> None:
+            path = filedialog.askopenfilename(
+                title="Select font file",
+                initialdir=str(self.assets_dir),
+                filetypes=[("Font files", "*.ttf *.otf *.TTF *.OTF"), ("All files", "*.*")],
+                parent=dlg,
+            )
+            if path:
+                font_var.set(self._relative_to_assets(Path(path)))
+
+        ttk.Button(font_row, text="…", style="Icon.TButton", width=2,
+                   command=_browse_font).pack(side="left")
+        ttk.Label(font_row, text="  blank = system default", style="Dim.TLabel")\
+            .pack(side="left", padx=(4, 0))
+
+        # ---- Shadow section ----
+        ttk.Separator(outer, orient="horizontal").grid(
+            row=5, column=0, columnspan=4, sticky="ew", pady=(6, 4))
+        ttk.Label(outer, text="Shadow", style="Section.TLabel").grid(
+            row=6, column=0, columnspan=4, sticky="w", pady=(0, 4))
+
+        shadow_off = lbl.get("shadow_offset") or [4, 4]
+        ttk.Label(outer, text="Color").grid(row=7, column=0, sticky="w", pady=4, padx=(0, 8))
+        shadow_color_var = tk.StringVar(value=str(lbl.get("shadow_color") or ""))
+        ttk.Entry(outer, textvariable=shadow_color_var, width=12).grid(
+            row=7, column=1, sticky="w", pady=4)
+        ttk.Label(outer, text="(blank = no shadow)", style="Dim.TLabel").grid(
+            row=7, column=2, columnspan=2, sticky="w", padx=(8, 0), pady=4)
+
+        ttk.Label(outer, text="Offset X").grid(row=8, column=0, sticky="w", pady=4, padx=(0, 8))
+        shadow_x_var = tk.StringVar(value=str(int(shadow_off[0])))
+        ttk.Entry(outer, textvariable=shadow_x_var, width=8).grid(
+            row=8, column=1, sticky="w", pady=4)
+        ttk.Label(outer, text="Offset Y").grid(row=8, column=2, sticky="w", pady=4, padx=(8, 4))
+        shadow_y_var = tk.StringVar(value=str(int(shadow_off[1])))
+        ttk.Entry(outer, textvariable=shadow_y_var, width=8).grid(
+            row=8, column=3, sticky="w", pady=4)
+
+        ttk.Label(outer, text="Blur").grid(row=9, column=0, sticky="w", pady=4, padx=(0, 8))
+        shadow_blur_var = tk.StringVar(value=str(int(lbl.get("shadow_blur") or 0)))
+        ttk.Entry(outer, textvariable=shadow_blur_var, width=8).grid(
+            row=9, column=1, sticky="w", pady=4)
+        ttk.Label(outer, text="px radius  (0 = hard edge)", style="Dim.TLabel").grid(
+            row=9, column=2, columnspan=2, sticky="w", padx=(8, 0), pady=4)
+
+        # ---- Buttons ----
+        ttk.Separator(outer, orient="horizontal").grid(
+            row=10, column=0, columnspan=4, sticky="ew", pady=(8, 0))
+        btn_row = ttk.Frame(outer)
+        btn_row.grid(row=11, column=0, columnspan=4, pady=(8, 0), sticky="e")
+
+        def _commit() -> None:
+            try:
+                x = int(x_var.get() or "0")
+                y = int(y_var.get() or "0")
+            except ValueError:
+                x, y = 0, 0
+            size_s = size_var.get().strip()
+            try:
+                size = int(size_s) if size_s else 48
+            except ValueError:
+                size = 48
+            sc = shadow_color_var.get().strip() or None
+            try:
+                sx = int(shadow_x_var.get() or "4")
+                sy = int(shadow_y_var.get() or "4")
+            except ValueError:
+                sx, sy = 4, 4
+            try:
+                sblur = int(shadow_blur_var.get() or "0")
+            except ValueError:
+                sblur = 0
+            brand_io.update_label(
+                self.data, b, i, j,
+                text=text_var.get(),
+                position=[x, y],
+                font_size=size,
+                color=color_var.get().strip() or None,
+                anchor=anchor_var.get().strip() or None,
+                font=font_var.get().strip() or None,
+                bold=True if bold_var.get() else None,
+                shadow_color=sc,
+                shadow_offset=[sx, sy] if sc else None,
+                shadow_blur=sblur if sc and sblur > 0 else None,
+            )
+            self.on_dirty()
+            self._refresh_tree()
+            self._select(nid_shot(b, i))
+            dlg.destroy()
+
+        def _discard() -> None:
+            if is_new:
+                brand_io.delete_label(self.data, b, i, j)
+                self.on_dirty()
+                self._refresh_tree()
+            self._select(nid_shot(b, i))
+            dlg.destroy()
+
+        ttk.Button(btn_row, text="Cancel", command=_discard).pack(side="left", padx=(0, 6))
+        ttk.Button(btn_row, text="Save", command=_commit).pack(side="left")
+
+        dlg.bind("<Return>", lambda _e: _commit())
+        dlg.bind("<Escape>", lambda _e: _discard())
+        dlg.protocol("WM_DELETE_WINDOW", _discard)
+
+        dlg.update_idletasks()
+        pw = self.winfo_toplevel()
+        cx = pw.winfo_x() + (pw.winfo_width() - dlg.winfo_reqwidth()) // 2
+        cy = pw.winfo_y() + (pw.winfo_height() - dlg.winfo_reqheight()) // 2
+        dlg.geometry(f"+{cx}+{cy}")
+        text_entry.focus_set()
+        text_entry.select_range(0, "end")
+
+    def _open_stamp_dialog(self, b: str, i: int, j: int, is_new: bool = False) -> None:
+        stamps = brand_io.get_stamps(self.data, b, i)
+        if not (0 <= j < len(stamps)):
+            return
+        st = stamps[j]
+
+        dlg = tk.Toplevel(self.winfo_toplevel())
+        dlg.title("Edit Stamp")
+        dlg.resizable(False, False)
+        dlg.transient(self.winfo_toplevel())
+        dlg.grab_set()
+
+        outer = ttk.Frame(dlg, padding=12)
+        outer.pack(fill="both", expand=True)
+        outer.columnconfigure(1, weight=1)
+        outer.columnconfigure(3, weight=1)
+
+        # ---- Source ----
+        ttk.Label(outer, text="Source").grid(row=0, column=0, sticky="w", pady=4, padx=(0, 8))
+        source_var = tk.StringVar(value=str(st.get("source") or ""))
+        src_row = ttk.Frame(outer)
+        src_row.grid(row=0, column=1, columnspan=3, sticky="ew", pady=4)
+        ttk.Entry(src_row, textvariable=source_var).pack(
+            side="left", fill="x", expand=True, padx=(0, 4))
+
+        def _browse_source() -> None:
+            start = self.assets_dir / "logos"
+            if b:
+                sp = start / b
+                if sp.is_dir():
+                    start = sp
+            path = filedialog.askopenfilename(
+                title="Select stamp image",
+                initialdir=str(start if start.is_dir() else self.assets_dir),
+                filetypes=[("Images", "*.png *.PNG *.jpg *.jpeg *.JPG"), ("All files", "*.*")],
+                parent=dlg,
+            )
+            if path:
+                source_var.set(self._relative_to_assets(Path(path)))
+
+        ttk.Button(src_row, text="…", style="Icon.TButton", width=2,
+                   command=_browse_source).pack(side="left")
+
+        # ---- Position ----
+        pos = st.get("position") or [0, 0]
+        ttk.Label(outer, text="X").grid(row=1, column=0, sticky="w", pady=4, padx=(0, 8))
+        x_var = tk.StringVar(value=str(int(pos[0])))
+        ttk.Entry(outer, textvariable=x_var, width=8).grid(row=1, column=1, sticky="w", pady=4)
+        ttk.Label(outer, text="Y").grid(row=1, column=2, sticky="w", pady=4, padx=(8, 4))
+        y_var = tk.StringVar(value=str(int(pos[1])))
+        ttk.Entry(outer, textvariable=y_var, width=8).grid(row=1, column=3, sticky="w", pady=4)
+
+        # ---- Scale + Opacity ----
+        ttk.Label(outer, text="Scale").grid(row=2, column=0, sticky="w", pady=4, padx=(0, 8))
+        scale_var = tk.StringVar(value=str(float(st.get("scale") or 1.0)))
+        ttk.Entry(outer, textvariable=scale_var, width=8).grid(row=2, column=1, sticky="w", pady=4)
+        ttk.Label(outer, text="Opacity").grid(row=2, column=2, sticky="w", pady=4, padx=(8, 4))
+        opacity_var = tk.StringVar(value=str(float(st.get("opacity", 1.0))))
+        ttk.Entry(outer, textvariable=opacity_var, width=8).grid(row=2, column=3, sticky="w", pady=4)
+        ttk.Label(outer, text="1.0 = original size   |   opacity: 0.0–1.0", style="Dim.TLabel").grid(
+            row=3, column=0, columnspan=4, sticky="w", pady=(0, 4))
+
+        # ---- Buttons ----
+        ttk.Separator(outer, orient="horizontal").grid(
+            row=4, column=0, columnspan=4, sticky="ew", pady=(4, 0))
+        btn_row = ttk.Frame(outer)
+        btn_row.grid(row=5, column=0, columnspan=4, pady=(8, 0), sticky="e")
+
+        def _commit() -> None:
+            try:
+                x = int(x_var.get() or "0")
+                y = int(y_var.get() or "0")
+            except ValueError:
+                x, y = 0, 0
+            try:
+                scale = float(scale_var.get() or "1.0")
+            except ValueError:
+                scale = 1.0
+            try:
+                opacity = max(0.0, min(1.0, float(opacity_var.get() or "1.0")))
+            except ValueError:
+                opacity = 1.0
+            brand_io.update_stamp(
+                self.data, b, i, j,
+                source=source_var.get().strip(),
+                position=[x, y],
+                scale=scale,
+                opacity=opacity if opacity < 1.0 else None,
+            )
+            self.on_dirty()
+            self._refresh_tree()
+            self._select(nid_shot(b, i))
+            dlg.destroy()
+
+        def _discard() -> None:
+            if is_new:
+                brand_io.delete_stamp(self.data, b, i, j)
+                self.on_dirty()
+                self._refresh_tree()
+            self._select(nid_shot(b, i))
+            dlg.destroy()
+
+        ttk.Button(btn_row, text="Cancel", command=_discard).pack(side="left", padx=(0, 6))
+        ttk.Button(btn_row, text="Save", command=_commit).pack(side="left")
+
+        dlg.bind("<Return>", lambda _e: _commit())
+        dlg.bind("<Escape>", lambda _e: _discard())
+        dlg.protocol("WM_DELETE_WINDOW", _discard)
+
+        dlg.update_idletasks()
+        pw = self.winfo_toplevel()
+        cx = pw.winfo_x() + (pw.winfo_width() - dlg.winfo_reqwidth()) // 2
+        cy = pw.winfo_y() + (pw.winfo_height() - dlg.winfo_reqheight()) // 2
+        dlg.geometry(f"+{cx}+{cy}")
+        source_var.get() or _browse_source()
+
     # ===================================================================
     # Inspector — Stamp
     # ===================================================================
@@ -1622,9 +1926,15 @@ class BrandsTab(ttk.Frame):
             self._select(nid_shot(parts[0], int(parts[1])))
             return
         elif kind == "label":
-            self._set_selection("label", parts[0], int(parts[1]), int(parts[2]), None)
+            b, i, j = parts[0], int(parts[1]), int(parts[2])
+            self._set_selection("shot", b, i, None, None)
+            self.after(0, lambda b=b, i=i, j=j: self._open_label_dialog(b, i, j))
+            return
         elif kind == "stamp":
-            self._set_selection("stamp", parts[0], int(parts[1]), None, int(parts[2]))
+            b, i, j = parts[0], int(parts[1]), int(parts[2])
+            self._set_selection("shot", b, i, None, None)
+            self.after(0, lambda b=b, i=i, j=j: self._open_stamp_dialog(b, i, j))
+            return
 
     def _on_tree_double_click(self, event: tk.Event) -> None:
         # Toggle open state on double-click for any expandable node.
@@ -1699,37 +2009,22 @@ class BrandsTab(ttk.Frame):
     def _add_label(self) -> None:
         if self._sel_brand is None or self._sel_shot is None:
             return
-        brand_io.add_label(self.data, self._sel_brand, self._sel_shot)
+        b, i = self._sel_brand, self._sel_shot
+        brand_io.add_label(self.data, b, i)
         self.on_dirty()
         self._refresh_tree()
-        labels = brand_io.get_labels(self.data, self._sel_brand, self._sel_shot)
-        self._select(nid_label(self._sel_brand, self._sel_shot, len(labels) - 1))
+        labels = brand_io.get_labels(self.data, b, i)
+        self._open_label_dialog(b, i, len(labels) - 1, is_new=True)
 
     def _add_stamp(self) -> None:
         if self._sel_brand is None or self._sel_shot is None:
             return
-        start = self.assets_dir / "logos"
-        if self._sel_brand:
-            specific = start / self._sel_brand
-            if specific.is_dir():
-                start = specific
-        if not start.is_dir():
-            start = self.assets_dir
-        self.winfo_toplevel().lift()
-        path = filedialog.askopenfilename(
-            title="Pick stamp image",
-            initialdir=str(start),
-            filetypes=[("Images", "*.png *.PNG *.jpg *.jpeg *.JPG"), ("All files", "*.*")],
-            parent=self.winfo_toplevel(),
-        )
-        if not path:
-            return
-        rel = self._relative_to_assets(Path(path))
-        brand_io.add_stamp(self.data, self._sel_brand, self._sel_shot, source=rel)
+        b, i = self._sel_brand, self._sel_shot
+        brand_io.add_stamp(self.data, b, i)
         self.on_dirty()
         self._refresh_tree()
-        stamps = brand_io.get_stamps(self.data, self._sel_brand, self._sel_shot)
-        self._select(nid_stamp(self._sel_brand, self._sel_shot, len(stamps) - 1))
+        stamps = brand_io.get_stamps(self.data, b, i)
+        self._open_stamp_dialog(b, i, len(stamps) - 1, is_new=True)
 
     def _delete_selected(self) -> None:
         kind = self._sel_kind
@@ -2089,14 +2384,38 @@ class BrandsTab(ttk.Frame):
         self.preview_canvas.config(cursor="")
 
     def _on_preview_motion(self, event: tk.Event) -> None:
-        if self._drag_handle is not None or self._drag_move is not None:
-            return  # cursor already set during drag
-        if self._hit_handle(event.x, event.y) is not None:
-            self.preview_canvas.config(cursor="crosshair")
-        elif self._hit_crop_interior(event.x, event.y):
-            self.preview_canvas.config(cursor="fleur")
+        if self._drag_handle is None and self._drag_move is None:
+            if self._hit_crop_interior(event.x, event.y):
+                self.preview_canvas.config(cursor="fleur")
+            else:
+                self.preview_canvas.config(cursor="crosshair")
+
+        # Floating coordinate overlay.
+        if self._preview_image is None:
+            self._coord_label.place_forget()
+            return
+        ox, oy = self._preview_origin
+        s = self._preview_scale or 1.0
+        cx = self.preview_canvas.canvasx(event.x)
+        cy = self.preview_canvas.canvasy(event.y)
+        ix = int(round((cx - ox) / s))
+        iy = int(round((cy - oy) / s))
+        iw, ih = self._preview_image.size
+        if 0 <= ix <= iw and 0 <= iy <= ih:
+            self._coord_label.config(text=f"x {ix}   y {iy}")
+            cw = self.preview_canvas.winfo_width()
+            ch = self.preview_canvas.winfo_height()
+            lw = self._coord_label.winfo_reqwidth()
+            lh = self._coord_label.winfo_reqheight()
+            lx = min(event.x + 14, cw - lw - 4)
+            ly = min(event.y + 14, ch - lh - 4)
+            self._coord_label.place(x=lx, y=ly)
+            self._coord_label.lift()
         else:
-            self.preview_canvas.config(cursor="")
+            self._coord_label.place_forget()
+
+    def _on_preview_leave(self, _event: tk.Event) -> None:
+        self._coord_label.place_forget()
 
     def _drag_crop_handle(self, vx: int, vy: int) -> None:
         if (self._sel_brand is None or self._sel_shot is None

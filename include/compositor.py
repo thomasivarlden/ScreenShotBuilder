@@ -2,7 +2,7 @@
 from pathlib import Path
 from typing import Any, Dict, List, Sequence, Tuple
 
-from PIL import Image, ImageChops, ImageDraw, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 from .perspective import warp_to_quad
 from .postprocess import apply_post_process
@@ -12,6 +12,19 @@ Point = Tuple[float, float]
 
 def _to_point(v: Sequence) -> Point:
     return (float(v[0]), float(v[1]))
+
+
+def _norm_color(color: Any) -> str | None:
+    """Return a PIL-compatible color string, or None if input is empty/None."""
+    if not color:
+        return None
+    s = str(color).strip()
+    if not s:
+        return None
+    # Bare hex digits without '#' — 3 or 6 char forms.
+    if s[0] != "#" and all(c in "0123456789abcdefABCDEF" for c in s) and len(s) in (3, 6):
+        s = "#" + s
+    return s
 
 
 def _round_corners(image: Image.Image, radius_base_px: float, quad: List[Point]) -> Image.Image:
@@ -56,25 +69,47 @@ def _quad_from_corners(corners: Dict[str, Sequence]) -> List[Point]:
     ]
 
 
-def _load_font(font_path: str | None, size: int, assets_dir: Path) -> ImageFont.FreeTypeFont:
+_BOLD_FONTS = (
+    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",          # macOS
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",        # Linux
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    "C:/Windows/Fonts/arialbd.ttf",                                # Windows
+    "C:/Windows/Fonts/segoeuib.ttf",
+    "C:/Windows/Fonts/calibrib.ttf",
+    "C:/Windows/Fonts/tahomabd.ttf",
+)
+_REGULAR_FONTS = (
+    "/System/Library/Fonts/Helvetica.ttc",                         # macOS
+    "/System/Library/Fonts/Supplemental/Arial.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",             # Linux
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    "C:/Windows/Fonts/Arial.ttf",                                  # Windows
+    "C:/Windows/Fonts/segoeui.ttf",
+    "C:/Windows/Fonts/calibri.ttf",
+    "C:/Windows/Fonts/tahoma.ttf",
+)
+
+
+def _load_font(font_path: str | None, size: int, assets_dir: Path,
+               bold: bool = False) -> ImageFont.FreeTypeFont:
     if font_path:
         candidate = Path(font_path)
         if not candidate.is_absolute():
             candidate = assets_dir / candidate
         if candidate.is_file():
             return ImageFont.truetype(str(candidate), size=size)
-    # Fallbacks: look for common system fonts, else default.
-    for sys_font in (
-        "/System/Library/Fonts/Helvetica.ttc",
-        "/System/Library/Fonts/Supplemental/Arial.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    ):
+    # Try bold variants first when bold is requested, then fall back to regular.
+    candidates = (_BOLD_FONTS + _REGULAR_FONTS) if bold else (_REGULAR_FONTS + _BOLD_FONTS)
+    for sys_font in candidates:
         if Path(sys_font).is_file():
             try:
                 return ImageFont.truetype(sys_font, size=size)
             except OSError:
                 pass
-    return ImageFont.load_default()
+    try:
+        return ImageFont.load_default(size=size)
+    except TypeError:
+        return ImageFont.load_default()
 
 
 def _draw_label(
@@ -86,22 +121,28 @@ def _draw_label(
     if not text:
         return
     pos = _to_point(label.get("position", [0, 0]))
-    color = label.get("color", "#000000")
-    shadow_color = label.get("shadow_color")
-    shadow_offset = label.get("shadow_offset", [2, 2])
-    font = _load_font(label.get("font"), int(label.get("font_size", 48)), assets_dir)
-    anchor = label.get("anchor")  # e.g. "mm" for centered
+    color = _norm_color(label.get("color")) or "#000000"
+    shadow_color = _norm_color(label.get("shadow_color"))
+    shadow_offset = label.get("shadow_offset", [4, 4])
+    shadow_blur = max(0, int(label.get("shadow_blur") or 0))
+    font = _load_font(label.get("font"), int(label.get("font_size") or 48), assets_dir,
+                      bold=bool(label.get("bold")))
+    anchor = label.get("anchor") or None
 
     draw = ImageDraw.Draw(canvas)
     if shadow_color:
         sx, sy = float(shadow_offset[0]), float(shadow_offset[1])
-        draw.text(
-            (pos[0] + sx, pos[1] + sy),
-            text,
-            font=font,
-            fill=shadow_color,
-            anchor=anchor,
-        )
+        if shadow_blur > 0:
+            shadow_layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+            ImageDraw.Draw(shadow_layer).text(
+                (pos[0] + sx, pos[1] + sy), text,
+                font=font, fill=shadow_color, anchor=anchor,
+            )
+            shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(shadow_blur))
+            canvas.alpha_composite(shadow_layer)
+        else:
+            draw.text((pos[0] + sx, pos[1] + sy), text,
+                      font=font, fill=shadow_color, anchor=anchor)
     draw.text(pos, text, font=font, fill=color, anchor=anchor)
 
 
@@ -118,6 +159,11 @@ def _apply_stamp(
     if scale != 1.0:
         new_size = (max(1, int(stamp.width * scale)), max(1, int(stamp.height * scale)))
         stamp = stamp.resize(new_size, Image.LANCZOS)
+    opacity = max(0.0, min(1.0, float(stamp_cfg.get("opacity", 1.0))))
+    if opacity < 1.0:
+        r, g, b, a = stamp.split()
+        a = a.point(lambda v: int(v * opacity))
+        stamp = Image.merge("RGBA", (r, g, b, a))
     pos = _to_point(stamp_cfg.get("position", [0, 0]))
     canvas.alpha_composite(stamp, dest=(int(pos[0]), int(pos[1])))
 
@@ -197,20 +243,19 @@ def build_composite(
 
     warped = warp_to_quad(screenshot, base.size, quad)
 
-    # Build the phone composite (warp + base + stamps + labels) on a base-sized
-    # intermediate so stamp/label positions stay in base-image coordinates,
-    # then paste it onto the padded canvas at (pad_l, pad_t).
+    # Composite warp + phone frame onto the padded canvas.
     phone_canvas = Image.new("RGBA", base.size, (0, 0, 0, 0))
     phone_canvas.alpha_composite(warped)
     phone_canvas.alpha_composite(base)
+    canvas.alpha_composite(phone_canvas, dest=(pad_l, pad_t))
+
+    # Labels and stamps are drawn on the full padded canvas so that their
+    # x/y coordinates match what the preview coordinate readout shows.
+    for label in shot_cfg.get("labels", []) or []:
+        _draw_label(canvas, label, assets_dir)
 
     for stamp_cfg in shot_cfg.get("stamps", []) or []:
-        _apply_stamp(phone_canvas, stamp_cfg, assets_dir)
-
-    for label in shot_cfg.get("labels", []) or []:
-        _draw_label(phone_canvas, label, assets_dir)
-
-    canvas.alpha_composite(phone_canvas, dest=(pad_l, pad_t))
+        _apply_stamp(canvas, stamp_cfg, assets_dir)
 
     # Post-process: shot-level overrides brand-level entirely if present.
     pp_cfg = shot_cfg.get("post_process", brand_cfg.get("post_process"))

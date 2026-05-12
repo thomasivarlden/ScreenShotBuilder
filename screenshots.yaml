@@ -356,8 +356,36 @@ brands:
     screenshots:
       - source: screenshots/fishy/IMG_3698.PNG
         output: 03_IMG_3698.png
-        labels: []
-        stamps: []
+        labels:
+          - text: Arrangera och delta i
+            position:
+              - 1050
+              - 150
+            font_size: 250
+            color: FFE715
+            shadow_color: '#000000'
+            shadow_offset:
+              - 4
+              - 4
+            shadow_blur: 2
+          - text: Fisketävlingar
+            position:
+              - 1000
+              - 100
+            font_size: 300
+            color: FEE715
+            shadow_color: '000000'
+            shadow_offset:
+              - 4
+              - 4
+            shadow_blur: 2
+        stamps:
+          - source: logos\Fishy.Fish.png
+            position:
+              - 3000
+              - 4760
+            scale: 0.2
+            opacity: 0.5
         phone: iPhone_Plain_1
         post_process:
           crop:
