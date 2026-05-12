@@ -18,10 +18,31 @@ def make_yaml() -> YAML:
     return y
 
 
+_PATH_KEYS = frozenset({"base_image", "background_image", "source", "font"})
+
+
+def _normalize_path_separators(node: Any) -> None:
+    """Convert backslashes to forward slashes in path-valued keys, in place.
+
+    Configs authored on Windows save with `\\`; on POSIX those don't resolve.
+    """
+    if isinstance(node, dict):
+        for k, v in list(node.items()):
+            if k in _PATH_KEYS and isinstance(v, str) and "\\" in v:
+                node[k] = v.replace("\\", "/")
+            else:
+                _normalize_path_separators(v)
+    elif isinstance(node, list):
+        for item in node:
+            _normalize_path_separators(item)
+
+
 def load_round_trip(path: Path) -> Any:
     y = make_yaml()
     with path.open("r", encoding="utf-8") as fh:
-        return y.load(fh)
+        data = y.load(fh)
+    _normalize_path_separators(data)
+    return data
 
 
 def save_round_trip(path: Path, data: Any) -> None:

@@ -357,11 +357,11 @@ brands:
       - source: screenshots/fishy/IMG_3698.PNG
         output: 03_IMG_3698.png
         labels:
-          - text: Arrangera och delta i
+          - text: Arrange and participate in
             position:
-              - 1040
+              - 1030
               - 222
-            font_size: 230
+            font_size: 195
             color: FFE715
             shadow_color: '#000000'
             shadow_offset:
@@ -369,11 +369,11 @@ brands:
               - 10
             shadow_blur: 2
             bold: true
-          - text: Fisketävlingar
+          - text: Fishing Tournaments
             position:
-              - 1220
+              - 1030
               - 500
-            font_size: 300
+            font_size: 240
             color: FEE715
             shadow_color: '000000'
             shadow_offset:
@@ -382,32 +382,34 @@ brands:
             shadow_blur: 3
             bold: true
         stamps:
-          - source: logos\Fishy.Fish.png
+          - source: logos/Fishy.Fish.png
             position:
-              - 3000
-              - 5400
+              - 2993
+              - 5310
             scale: 0.2
             opacity: 0.5
         phone: iPhone_Plain_1
         post_process:
           crop:
             box:
-              - 827
-              - 47
-              - 3561
-              - 5978
+              - 864
+              - 37
+              - 3598
+              - 5968
           resize:
             width: 1320
             height: 2868
+        background_offset:
+          left: 500
       - source: screenshots/fishy/IMG_3693.PNG
         output: 02_IMG_3693.png
         phone: iPhone_Plain_0
         labels:
           - text: Fishy Live
             position:
-              - 1750
+              - 1450
               - 200
-            font_size: 300
+            font_size: 425
             color: FFE715
             bold: true
             shadow_color: '000000'
@@ -415,32 +417,70 @@ brands:
               - 12
               - 12
             shadow_blur: 3
-        stamps: []
+        stamps:
+          - source: logos/Fishy.Fish.png
+            position:
+              - 3212
+              - 5001
+            scale: 0.19
+            opacity: 0.5
         post_process:
           crop:
             box:
-              - 1168
+              - 1193
               - 0
-              - 3761
-              - 5588
+              - 3786
+              - 5625
           resize:
             width: 1320
             height: 2868
-      - source: screenshots\fishy\IMG_3701.PNG
+      - source: screenshots/fishy/IMG_3701.PNG
         output: 03_IMG_3696.png
         phone: iPhone_Plain_2
-        labels: []
-        stamps: []
+        labels:
+          - text: Updated in real time
+            position:
+              - 1325
+              - 222
+            font_size: 195
+            color: FFE715
+            bold: true
+            shadow_color: '#000000'
+            shadow_offset:
+              - 10
+              - 10
+            shadow_blur: 2
+          - text: Live Leaderboards
+            position:
+              - 1200
+              - 500
+            font_size: 240
+            color: FEE715
+            bold: true
+            shadow_color: '000000'
+            shadow_offset:
+              - 10
+              - 10
+            shadow_blur: 3
+        stamps:
+          - source: logos/Fishy.Fish.png
+            position:
+              - 3057
+              - 5543
+            scale: 0.21
+            opacity: 0.5
         post_process:
           crop:
             box:
-              - 874
+              - 818
               - 0
-              - 3783
-              - 5942
+              - 3692
+              - 6234
           resize:
             width: 1320
             height: 2868
+        background_offset:
+          left: 500
       - source: screenshots/fishy/IMG_3693.PNG
         output: 04_IMG_3698.png
         phone: b3
@@ -453,6 +493,53 @@ brands:
               - 1311
               - 7240
               - 5430
+      - source: screenshots/fishy/IMG_3696.PNG
+        output: 03_IMG_3696_copy.png
+        phone: iPhone_Plain_0
+        labels:
+          - text: Syncs when network is available
+            position:
+              - 1320
+              - 500
+            font_size: 150
+            color: FFE715
+            bold: true
+            shadow_color: '#000000'
+            shadow_offset:
+              - 10
+              - 10
+            shadow_blur: 2
+          - text: Report your Catches
+            position:
+              - 1300
+              - 222
+            font_size: 240
+            color: FEE715
+            bold: true
+            shadow_color: '000000'
+            shadow_offset:
+              - 10
+              - 10
+            shadow_blur: 3
+        stamps:
+          - source: logos/Fishy.Fish.png
+            position:
+              - 3212
+              - 5021
+            scale: 0.19
+            opacity: 0.5
+        post_process:
+          crop:
+            box:
+              - 1188
+              - 8
+              - 3787
+              - 5646
+          resize:
+            width: 1320
+            height: 2868
+        background_offset:
+          left: 1000
     background_image: backgrounds/gray_waves.png
     background_scale: 1.2
     phone_padding:

@@ -193,6 +193,7 @@ class BrandsTab(ttk.Frame):
         self._render_after_id: str | None = None             # debounce token
         self._render_token: int = 0                          # cancel-stale-renders
         self._cur_preview_key: tuple[str, int] | None = None  # (brand, shot_idx)
+        self._last_render_sig: str | None = None  # skip rebuilds when inputs unchanged
         self._preview_origin: tuple[int, int] = (0, 0)
         self._drag_handle: str | None = None  # "tl"|"tr"|"br"|"bl" or None
         # Crop-rect move state: (start_ix, start_iy, l0, t0, r0, b0) or None
@@ -275,6 +276,10 @@ class BrandsTab(ttk.Frame):
         vbar.pack(side="right", fill="y")
         self.tree.bind("<<TreeviewSelect>>", lambda _e: self._on_tree_select())
         self.tree.bind("<Double-1>", self._on_tree_double_click)
+        # Right-click context menu (Button-2 is right-click on macOS trackpads,
+        # Button-3 on Linux/Windows; Control-Button-1 is the mac fallback).
+        for seq in ("<Button-2>", "<Button-3>", "<Control-Button-1>"):
+            self.tree.bind(seq, self._on_tree_right_click)
 
         # Visual indent for nested levels (Tk default is OK; nothing needed).
 
@@ -289,7 +294,7 @@ class BrandsTab(ttk.Frame):
             .pack(side="left", padx=2)
         ttk.Button(bar, text="Fit", command=self._preview_zoom_fit)\
             .pack(side="left", padx=4)
-        ttk.Button(bar, text="↻", width=3, command=self._render_preview_now)\
+        ttk.Button(bar, text="↻", width=3, command=self._force_render_preview)\
             .pack(side="left")
         self.preview_status_var = tk.StringVar(value="")
         ttk.Label(bar, textvariable=self.preview_status_var,
@@ -548,8 +553,13 @@ class BrandsTab(ttk.Frame):
             return
         shot = brand_io.get_screenshots(self.data, b)[i]
 
-        ttk.Label(body, text=f"Output · {shot.get('output') or '(unnamed)'}",
-                  style="Heading.TLabel").pack(anchor="w", padx=8, pady=(8, 4))
+        header = ttk.Frame(body)
+        header.pack(fill="x", padx=8, pady=(8, 4))
+        ttk.Label(header, text=f"Output · {shot.get('output') or '(unnamed)'}",
+                  style="Heading.TLabel").pack(side="left")
+        ttk.Button(header, text="Duplicate",
+                   command=lambda: self._duplicate_shot(b, i))\
+            .pack(side="right")
         ttk.Label(body, text=f"in brand · {b}", style="Dim.TLabel")\
             .pack(anchor="w", padx=8)
 
@@ -593,8 +603,19 @@ class BrandsTab(ttk.Frame):
         # --- Quick add buttons ---
         actions = ttk.Frame(body); actions.pack(fill="x", padx=8, pady=(8, 4))
         ttk.Button(actions, text="＋ Label", command=self._add_label).pack(side="left")
+        self.label_paste_btn = ttk.Button(
+            actions, text="📥", width=2, command=self._paste_label_into_current,
+        )
+        self.label_paste_btn.pack(side="left", padx=(2, 4))
+        attach_tooltip(self.label_paste_btn, "Paste label from clipboard")
         ttk.Button(actions, text="＋ Stamp", command=self._add_stamp)\
-            .pack(side="left", padx=4)
+            .pack(side="left")
+        self.stamp_paste_btn = ttk.Button(
+            actions, text="📥", width=2, command=self._paste_stamp_into_current,
+        )
+        self.stamp_paste_btn.pack(side="left", padx=(2, 4))
+        attach_tooltip(self.stamp_paste_btn, "Paste stamp from clipboard")
+        self._refresh_paste_state()
 
         # --- Compact lists with counts (selecting jumps to that node) ---
         labels = brand_io.get_labels(self.data, b, i)
@@ -986,13 +1007,25 @@ class BrandsTab(ttk.Frame):
                 b = t + new_h
         elif source == "a":
             ratio = self._parse_aspect(self.crop_a_var.get())
-            cur_w = max(1, r - l)
-            if ratio is not None:
-                new_h = max(1, int(round(cur_w / ratio)))
+            if ratio is not None and ratio > 0:
+                # Width-led: keep current width and derive height.
+                new_w = max(1, r - l)
+                new_h = max(1, int(round(new_w / ratio)))
+                # If height overflows the image, constrain by height instead.
+                if new_h > ih:
+                    new_h = ih
+                    new_w = max(1, int(round(ih * ratio)))
+                # If width now overflows too, constrain by width.
+                if new_w > iw:
+                    new_w = iw
+                    new_h = max(1, int(round(iw / ratio)))
                 if mode == "center":
+                    cx = (l + r) // 2
                     cy = (t + b) // 2
+                    l = cx - new_w // 2; r = l + new_w
                     t = cy - new_h // 2; b = t + new_h
                 else:
+                    r = l + new_w
                     b = t + new_h
 
         # Clamp to image bounds.
@@ -1180,20 +1213,38 @@ class BrandsTab(ttk.Frame):
             return False
 
     def _refresh_paste_state(self) -> None:
-        """Enable/disable the paste button based on clipboard contents.
-        Re-runs every ~700ms while the button still exists."""
+        """Enable/disable known paste buttons based on clipboard contents.
+        Re-runs every ~700ms while at least one paste button still exists."""
+        alive = False
+        # Transform paste button.
         btn = getattr(self, "crop_paste_btn", None)
-        if btn is None:
-            return
-        try:
-            exists = bool(btn.winfo_exists())
-        except tk.TclError:
-            exists = False
-        if not exists:
-            self.crop_paste_btn = None  # type: ignore[assignment]
-            return
-        btn.state(["!disabled"] if self._clipboard_has_transform() else ["disabled"])
-        self.after(700, self._refresh_paste_state)
+        if btn is not None:
+            try:
+                if btn.winfo_exists():
+                    btn.state(["!disabled"] if self._clipboard_has_transform()
+                              else ["disabled"])
+                    alive = True
+                else:
+                    self.crop_paste_btn = None  # type: ignore[assignment]
+            except tk.TclError:
+                self.crop_paste_btn = None  # type: ignore[assignment]
+        # Label/stamp paste buttons.
+        kind = self._clipboard_kind()
+        for attr, want in (("label_paste_btn", "ssb-label"),
+                           ("stamp_paste_btn", "ssb-stamp")):
+            pb = getattr(self, attr, None)
+            if pb is None:
+                continue
+            try:
+                if pb.winfo_exists():
+                    pb.state(["!disabled"] if kind == want else ["disabled"])
+                    alive = True
+                else:
+                    setattr(self, attr, None)
+            except tk.TclError:
+                setattr(self, attr, None)
+        if alive:
+            self.after(700, self._refresh_paste_state)
 
     def _copy_transform(self) -> None:
         """Copy box-mode crop + resize values to the clipboard as JSON."""
@@ -1290,6 +1341,114 @@ class BrandsTab(ttk.Frame):
         self._on_transform_field_change()
         self._draw_crop_overlay()
 
+    # ---------- label / stamp clipboard ----------------------------------
+
+    @staticmethod
+    def _to_plain(obj: Any) -> Any:
+        """Convert ruamel CommentedMap/Seq (and nested) to plain dict/list."""
+        if isinstance(obj, dict):
+            return {str(k): BrandsTab._to_plain(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            return [BrandsTab._to_plain(v) for v in obj]
+        return obj
+
+    @staticmethod
+    def _to_commented(obj: Any) -> Any:
+        """Convert plain JSON dict/list into ruamel CommentedMap/Seq for YAML."""
+        from ruamel.yaml.comments import CommentedMap, CommentedSeq
+        if isinstance(obj, dict):
+            m = CommentedMap()
+            for k, v in obj.items():
+                m[k] = BrandsTab._to_commented(v)
+            return m
+        if isinstance(obj, list):
+            s = CommentedSeq()
+            for v in obj:
+                s.append(BrandsTab._to_commented(v))
+            return s
+        return obj
+
+    def _clipboard_kind(self) -> str | None:
+        """Return the 'kind' marker from a JSON clipboard payload, or None."""
+        import json
+        try:
+            raw = (self.clipboard_get() or "").strip()
+        except tk.TclError:
+            return None
+        if not raw:
+            return None
+        try:
+            data = json.loads(raw)
+        except (ValueError, TypeError):
+            return None
+        if (isinstance(data, dict)
+                and isinstance(data.get("kind"), str)
+                and isinstance(data.get("data"), dict)):
+            return data["kind"]
+        return None
+
+    def _read_clipboard_payload(self, want_kind: str) -> dict | None:
+        import json
+        try:
+            raw = (self.clipboard_get() or "").strip()
+        except tk.TclError:
+            return None
+        try:
+            data = json.loads(raw)
+        except (ValueError, TypeError):
+            return None
+        if (isinstance(data, dict) and data.get("kind") == want_kind
+                and isinstance(data.get("data"), dict)):
+            return data["data"]
+        return None
+
+    def _put_on_clipboard(self, kind: str, obj: Any) -> None:
+        import json
+        payload = {"kind": kind, "data": self._to_plain(obj)}
+        self.clipboard_clear()
+        self.clipboard_append(json.dumps(payload, separators=(",", ":")))
+        self._refresh_paste_state()
+
+    def _copy_label(self) -> None:
+        if (self._sel_brand is None or self._sel_shot is None
+                or self._sel_label is None):
+            return
+        labels = brand_io.get_labels(self.data, self._sel_brand, self._sel_shot)
+        if 0 <= self._sel_label < len(labels):
+            self._put_on_clipboard("ssb-label", labels[self._sel_label])
+
+    def _copy_stamp(self) -> None:
+        if (self._sel_brand is None or self._sel_shot is None
+                or self._sel_stamp is None):
+            return
+        stamps = brand_io.get_stamps(self.data, self._sel_brand, self._sel_shot)
+        if 0 <= self._sel_stamp < len(stamps):
+            self._put_on_clipboard("ssb-stamp", stamps[self._sel_stamp])
+
+    def _paste_label_into_current(self) -> None:
+        if self._sel_brand is None or self._sel_shot is None:
+            return
+        payload = self._read_clipboard_payload("ssb-label")
+        if payload is None:
+            return
+        labels = brand_io.get_labels(self.data, self._sel_brand, self._sel_shot)
+        labels.append(self._to_commented(payload))
+        self.on_dirty()
+        self._refresh_tree()
+        self._select(nid_label(self._sel_brand, self._sel_shot, len(labels) - 1))
+
+    def _paste_stamp_into_current(self) -> None:
+        if self._sel_brand is None or self._sel_shot is None:
+            return
+        payload = self._read_clipboard_payload("ssb-stamp")
+        if payload is None:
+            return
+        stamps = brand_io.get_stamps(self.data, self._sel_brand, self._sel_shot)
+        stamps.append(self._to_commented(payload))
+        self.on_dirty()
+        self._refresh_tree()
+        self._select(nid_stamp(self._sel_brand, self._sel_shot, len(stamps) - 1))
+
     def _on_transform_field_change(self) -> None:
         if self._loading or self._sel_brand is None or self._sel_shot is None:
             return
@@ -1378,8 +1537,16 @@ class BrandsTab(ttk.Frame):
         if not (0 <= j < len(labels)):
             return
         lbl = labels[j]
-        ttk.Label(body, text="Label", style="Heading.TLabel")\
-            .pack(anchor="w", padx=8, pady=(8, 0))
+        header = ttk.Frame(body)
+        header.pack(fill="x", padx=8, pady=(8, 0))
+        ttk.Label(header, text="Label", style="Heading.TLabel").pack(side="left")
+        copy_btn = ttk.Button(header, text="📋", width=2, command=self._copy_label)
+        copy_btn.pack(side="right", padx=(2, 0))
+        attach_tooltip(copy_btn, "Copy label to clipboard")
+        dup_btn = ttk.Button(header, text="⎘", width=2,
+                             command=self._duplicate_selected)
+        dup_btn.pack(side="right", padx=(2, 0))
+        attach_tooltip(dup_btn, "Duplicate label in this output")
         ttk.Label(body, text=f"in {b} / {brand_io.get_screenshots(self.data, b)[i].get('output') or 'output'}",
                   style="Dim.TLabel").pack(anchor="w", padx=8, pady=(0, 4))
 
@@ -1430,10 +1597,8 @@ class BrandsTab(ttk.Frame):
 
         # Row of actions
         actions = ttk.Frame(body); actions.pack(fill="x", padx=8, pady=(8, 4))
-        ttk.Button(actions, text="Duplicate",
-                   command=self._duplicate_selected).pack(side="left")
         ttk.Button(actions, text="Delete", command=self._delete_selected)\
-            .pack(side="left", padx=4)
+            .pack(side="left")
 
     def _on_label_field_change(self) -> None:
         if (self._loading or self._sel_brand is None
@@ -1622,6 +1787,62 @@ class BrandsTab(ttk.Frame):
             self._select(nid_shot(b, i))
             dlg.destroy()
 
+        def _collect() -> dict:
+            """Build a label dict from current dialog values."""
+            try:
+                x = int(x_var.get() or "0")
+                y = int(y_var.get() or "0")
+            except ValueError:
+                x, y = 0, 0
+            try:
+                size = int(size_var.get() or "48")
+            except ValueError:
+                size = 48
+            try:
+                sx = int(shadow_x_var.get() or "4")
+                sy = int(shadow_y_var.get() or "4")
+            except ValueError:
+                sx, sy = 4, 4
+            try:
+                sblur = int(shadow_blur_var.get() or "0")
+            except ValueError:
+                sblur = 0
+            sc = shadow_color_var.get().strip()
+            d: dict[str, Any] = {
+                "text": text_var.get(),
+                "position": [x, y],
+                "font_size": size,
+            }
+            color = color_var.get().strip()
+            if color: d["color"] = color
+            anchor = anchor_var.get().strip()
+            if anchor: d["anchor"] = anchor
+            font = font_var.get().strip()
+            if font: d["font"] = font
+            if bold_var.get(): d["bold"] = True
+            if sc:
+                d["shadow_color"] = sc
+                d["shadow_offset"] = [sx, sy]
+                if sblur > 0:
+                    d["shadow_blur"] = sblur
+            return d
+
+        def _copy() -> None:
+            self._put_on_clipboard("ssb-label", _collect())
+
+        def _duplicate() -> None:
+            _commit()  # closes the dialog
+            labels_now = brand_io.get_labels(self.data, b, i)
+            labels_now.append(self._to_commented(_collect()))
+            self.on_dirty()
+            self._refresh_tree()
+            new_j = len(labels_now) - 1
+            self._select(nid_label(b, i, new_j))
+            self._open_label_dialog(b, i, new_j)
+
+        ttk.Button(btn_row, text="Copy", command=_copy).pack(side="left", padx=(0, 6))
+        ttk.Button(btn_row, text="Duplicate", command=_duplicate)\
+            .pack(side="left", padx=(0, 12))
         ttk.Button(btn_row, text="Cancel", command=_discard).pack(side="left", padx=(0, 6))
         ttk.Button(btn_row, text="Save", command=_commit).pack(side="left")
 
@@ -1739,6 +1960,45 @@ class BrandsTab(ttk.Frame):
             self._select(nid_shot(b, i))
             dlg.destroy()
 
+        def _collect() -> dict:
+            try:
+                x = int(x_var.get() or "0")
+                y = int(y_var.get() or "0")
+            except ValueError:
+                x, y = 0, 0
+            try:
+                scale = float(scale_var.get() or "1.0")
+            except ValueError:
+                scale = 1.0
+            try:
+                opacity = max(0.0, min(1.0, float(opacity_var.get() or "1.0")))
+            except ValueError:
+                opacity = 1.0
+            d: dict[str, Any] = {
+                "source": source_var.get().strip(),
+                "position": [x, y],
+                "scale": scale,
+            }
+            if opacity < 1.0:
+                d["opacity"] = opacity
+            return d
+
+        def _copy() -> None:
+            self._put_on_clipboard("ssb-stamp", _collect())
+
+        def _duplicate() -> None:
+            _commit()
+            stamps_now = brand_io.get_stamps(self.data, b, i)
+            stamps_now.append(self._to_commented(_collect()))
+            self.on_dirty()
+            self._refresh_tree()
+            new_j = len(stamps_now) - 1
+            self._select(nid_stamp(b, i, new_j))
+            self._open_stamp_dialog(b, i, new_j)
+
+        ttk.Button(btn_row, text="Copy", command=_copy).pack(side="left", padx=(0, 6))
+        ttk.Button(btn_row, text="Duplicate", command=_duplicate)\
+            .pack(side="left", padx=(0, 12))
         ttk.Button(btn_row, text="Cancel", command=_discard).pack(side="left", padx=(0, 6))
         ttk.Button(btn_row, text="Save", command=_commit).pack(side="left")
 
@@ -1763,8 +2023,16 @@ class BrandsTab(ttk.Frame):
         if not (0 <= j < len(stamps)):
             return
         st = stamps[j]
-        ttk.Label(body, text="Stamp", style="Heading.TLabel")\
-            .pack(anchor="w", padx=8, pady=(8, 0))
+        header = ttk.Frame(body)
+        header.pack(fill="x", padx=8, pady=(8, 0))
+        ttk.Label(header, text="Stamp", style="Heading.TLabel").pack(side="left")
+        copy_btn = ttk.Button(header, text="📋", width=2, command=self._copy_stamp)
+        copy_btn.pack(side="right", padx=(2, 0))
+        attach_tooltip(copy_btn, "Copy stamp to clipboard")
+        dup_btn = ttk.Button(header, text="⎘", width=2,
+                             command=self._duplicate_selected)
+        dup_btn.pack(side="right", padx=(2, 0))
+        attach_tooltip(dup_btn, "Duplicate stamp in this output")
         ttk.Label(body, text=f"in {b} / {brand_io.get_screenshots(self.data, b)[i].get('output') or 'output'}",
                   style="Dim.TLabel").pack(anchor="w", padx=8, pady=(0, 4))
 
@@ -1799,10 +2067,8 @@ class BrandsTab(ttk.Frame):
             .pack(side="left", padx=4)
 
         actions = ttk.Frame(body); actions.pack(fill="x", padx=8, pady=(8, 4))
-        ttk.Button(actions, text="Duplicate",
-                   command=self._duplicate_selected).pack(side="left")
         ttk.Button(actions, text="Delete", command=self._delete_selected)\
-            .pack(side="left", padx=4)
+            .pack(side="left")
 
     def _on_stamp_field_change(self) -> None:
         if (self._loading or self._sel_brand is None
@@ -1941,6 +2207,53 @@ class BrandsTab(ttk.Frame):
         iid = self.tree.identify_row(event.y)
         if iid and self.tree.get_children(iid):
             self.tree.item(iid, open=not self.tree.item(iid, "open"))
+
+    def _on_tree_right_click(self, event: tk.Event) -> None:
+        iid = self.tree.identify_row(event.y)
+        if not iid:
+            return
+        # Select the row under the cursor so following actions act on it.
+        self.tree.selection_set(iid)
+        self._on_tree_select()
+        kind = self._sel_kind
+        menu = tk.Menu(self, tearoff=0)
+        if kind == "shot":
+            menu.add_command(label="Duplicate output",
+                             command=self._duplicate_selected)
+            menu.add_separator()
+            menu.add_command(label="Add label", command=self._add_label)
+            menu.add_command(label="Add stamp", command=self._add_stamp)
+            paste_kind = self._clipboard_kind()
+            menu.add_command(label="Paste label",
+                             command=self._paste_label_into_current,
+                             state=("normal" if paste_kind == "ssb-label"
+                                    else "disabled"))
+            menu.add_command(label="Paste stamp",
+                             command=self._paste_stamp_into_current,
+                             state=("normal" if paste_kind == "ssb-stamp"
+                                    else "disabled"))
+            menu.add_separator()
+            menu.add_command(label="Delete output",
+                             command=self._delete_selected)
+        elif kind == "label":
+            menu.add_command(label="Copy label", command=self._copy_label)
+            menu.add_command(label="Duplicate", command=self._duplicate_selected)
+            menu.add_separator()
+            menu.add_command(label="Delete", command=self._delete_selected)
+        elif kind == "stamp":
+            menu.add_command(label="Copy stamp", command=self._copy_stamp)
+            menu.add_command(label="Duplicate", command=self._duplicate_selected)
+            menu.add_separator()
+            menu.add_command(label="Delete", command=self._delete_selected)
+        elif kind == "brand":
+            menu.add_command(label="Delete brand",
+                             command=self._delete_selected)
+        else:
+            return
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
 
     def _set_selection(self, kind: str, b: str | None, i: int | None,
                        lj: int | None, sj: int | None) -> None:
@@ -2084,6 +2397,35 @@ class BrandsTab(ttk.Frame):
             self.on_dirty()
             self._refresh_tree()
             self._select(nid_stamp(self._sel_brand, self._sel_shot, len(stamps) - 1))
+        elif (kind == "shot" and self._sel_brand is not None
+                and self._sel_shot is not None):
+            self._duplicate_shot(self._sel_brand, self._sel_shot)
+
+    def _duplicate_shot(self, b: str, i: int) -> None:
+        """Duplicate an output (with its labels & stamps) and select the copy."""
+        from copy import deepcopy
+        shots = brand_io.get_screenshots(self.data, b)
+        if not (0 <= i < len(shots)):
+            return
+        new_shot = deepcopy(shots[i])
+        # Derive a non-colliding output filename.
+        existing = {str(s.get("output") or "") for s in shots}
+        original = str(new_shot.get("output") or "")
+        if original:
+            stem, _, ext = original.rpartition(".")
+            if not stem:
+                stem, ext = original, ""
+            suffix = f".{ext}" if ext else ""
+            candidate = f"{stem}_copy{suffix}"
+            n = 2
+            while candidate in existing:
+                candidate = f"{stem}_copy{n}{suffix}"
+                n += 1
+            new_shot["output"] = candidate
+        shots.append(new_shot)
+        self.on_dirty()
+        self._refresh_tree()
+        self._select(nid_shot(b, len(shots) - 1))
 
     # ===================================================================
     # Keyboard handlers
@@ -2165,6 +2507,12 @@ class BrandsTab(ttk.Frame):
         delay = 0 if target != self._cur_preview_key else debounce_ms
         self._render_after_id = self.after(delay, self._render_preview_now)
 
+    def _force_render_preview(self) -> None:
+        """Manual reload — bypass the input-signature cache (e.g. for on-disk
+        asset changes that don't show in the YAML)."""
+        self._last_render_sig = None
+        self._render_preview_now()
+
     def _render_preview_now(self) -> None:
         self._render_after_id = None
         target = self._preview_target()
@@ -2195,6 +2543,27 @@ class BrandsTab(ttk.Frame):
             self._clear_preview(f"⚠ {exc}")
             return
 
+        # Skip the expensive composite if the inputs haven't changed since the
+        # last successful render. Many field-change traces fire even when the
+        # underlying value is identical (re-typed, same value reapplied).
+        import json
+        try:
+            sig = json.dumps(
+                {"k": [brand_name, shot_idx, phone_name],
+                 "m": self._to_plain(merged),
+                 "s": self._to_plain(shot)},
+                sort_keys=True, default=str, separators=(",", ":"),
+            )
+        except Exception:
+            sig = None
+        if (sig is not None and sig == self._last_render_sig
+                and self._preview_image is not None):
+            self.preview_status_var.set(
+                f"{self._preview_image.width}×{self._preview_image.height}  ·  "
+                f"{brand_name} / {shot.get('output') or '?'} [{phone_name or '?'}]"
+            )
+            return
+
         token = self._render_token = self._render_token + 1
         self.preview_status_var.set("Rendering…")
         self.update_idletasks()
@@ -2210,6 +2579,7 @@ class BrandsTab(ttk.Frame):
             return  # a newer render started while we were working
 
         self._preview_image = image
+        self._last_render_sig = sig
         self._blit_preview()
         self.preview_status_var.set(
             f"{image.width}×{image.height}  ·  {brand_name} / {shot.get('output') or '?'} [{phone_name or '?'}]"
@@ -2604,6 +2974,7 @@ class BrandsTab(ttk.Frame):
         self._preview_image = None
         self._preview_tk = None
         self._cur_preview_key = None
+        self._last_render_sig = None
         self.preview_canvas.delete("all")
         cw = max(self.preview_canvas.winfo_width(), 1)
         ch = max(self.preview_canvas.winfo_height(), 1)
@@ -2661,6 +3032,7 @@ class BrandsTab(ttk.Frame):
 
     def _relative_to_assets(self, path: Path) -> str:
         try:
-            return str(path.resolve().relative_to(self.assets_dir.resolve()))
+            rel = path.resolve().relative_to(self.assets_dir.resolve())
+            return rel.as_posix()
         except ValueError:
-            return str(path.resolve())
+            return path.resolve().as_posix()

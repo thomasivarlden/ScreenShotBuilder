@@ -10,6 +10,24 @@ class ConfigError(Exception):
 
 CORNER_KEYS = ("top_left", "top_right", "bottom_right", "bottom_left")
 
+# YAML keys whose string values are asset-relative paths. Normalized at load
+# time so configs authored on Windows (with backslashes) resolve on POSIX.
+_PATH_KEYS = frozenset(
+    {"base_image", "background_image", "source", "font"}
+)
+
+
+def _normalize_path_separators(node: Any) -> None:
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if k in _PATH_KEYS and isinstance(v, str) and "\\" in v:
+                node[k] = v.replace("\\", "/")
+            else:
+                _normalize_path_separators(v)
+    elif isinstance(node, list):
+        for item in node:
+            _normalize_path_separators(item)
+
 
 def load_config(path: Path) -> Dict[str, Any]:
     if not path.is_file():
@@ -22,6 +40,7 @@ def load_config(path: Path) -> Dict[str, Any]:
         raise ConfigError("Config must contain a 'brands' mapping")
     if "phones" in data and not isinstance(data["phones"], dict):
         raise ConfigError("'phones' must be a mapping of phone-name -> phone-config")
+    _normalize_path_separators(data)
     return data
 
 
