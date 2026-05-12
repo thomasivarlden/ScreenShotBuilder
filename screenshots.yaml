@@ -540,6 +540,180 @@ brands:
             height: 2868
         background_offset:
           left: 1000
+      - source: screenshots/fishy/IMG_3698.PNG
+        output: android_03_IMG_3698.png
+        phone: Android_Plain_1
+        labels:
+          - text: Arrange and participate in
+            position:
+              - 986
+              - 318
+            font_size: 195
+            color: FFE715
+            shadow_color: '#000000'
+            shadow_offset:
+              - 10
+              - 10
+            shadow_blur: 2
+            bold: true
+          - text: Fishing Tournaments
+            position:
+              - 986
+              - 596
+            font_size: 240
+            color: FEE715
+            shadow_color: '000000'
+            shadow_offset:
+              - 10
+              - 10
+            shadow_blur: 3
+            bold: true
+        stamps:
+          - source: logos/Fishy.Fish.png
+            position:
+              - 2949
+              - 5406
+            scale: 0.2
+            opacity: 0.5
+        post_process:
+          crop:
+            box:
+              - 820
+              - 133
+              - 3554
+              - 6064
+          resize:
+            width: 1320
+            height: 2868
+        background_offset:
+          left: 500
+      - source: screenshots/fishy/IMG_3693.PNG
+        output: android_02_IMG_3693.png
+        phone: Android_Plain_0
+        labels:
+          - text: Fishy Live
+            position:
+              - 1444
+              - 204
+            font_size: 425
+            color: FFE715
+            bold: true
+            shadow_color: '000000'
+            shadow_offset:
+              - 12
+              - 12
+            shadow_blur: 3
+        stamps:
+          - source: logos/Fishy.Fish.png
+            position:
+              - 3206
+              - 5005
+            scale: 0.19
+            opacity: 0.5
+        post_process:
+          crop:
+            box:
+              - 1187
+              - 4
+              - 3780
+              - 5629
+          resize:
+            width: 1320
+            height: 2868
+      - source: screenshots/fishy/IMG_3701.PNG
+        output: android_03_IMG_3696.png
+        phone: Android_Plain_2
+        labels:
+          - text: Updated in real time
+            position:
+              - 1143
+              - 299
+            font_size: 195
+            color: FFE715
+            bold: true
+            shadow_color: '#000000'
+            shadow_offset:
+              - 10
+              - 10
+            shadow_blur: 2
+          - text: Live Leaderboards
+            position:
+              - 1018
+              - 577
+            font_size: 240
+            color: FEE715
+            bold: true
+            shadow_color: '000000'
+            shadow_offset:
+              - 10
+              - 10
+            shadow_blur: 3
+        stamps:
+          - source: logos/Fishy.Fish.png
+            position:
+              - 2875
+              - 5620
+            scale: 0.21
+            opacity: 0.5
+        post_process:
+          crop:
+            box:
+              - 636
+              - 77
+              - 3510
+              - 6311
+          resize:
+            width: 1320
+            height: 2868
+        background_offset:
+          left: 500
+      - source: screenshots/fishy/IMG_3696.PNG
+        output: android_03_3696_copy.png
+        phone: Android_Plain_0
+        labels:
+          - text: Syncs when network is available
+            position:
+              - 1314
+              - 504
+            font_size: 150
+            color: FFE715
+            bold: true
+            shadow_color: '#000000'
+            shadow_offset:
+              - 10
+              - 10
+            shadow_blur: 2
+          - text: Report your Catches
+            position:
+              - 1294
+              - 226
+            font_size: 240
+            color: FEE715
+            bold: true
+            shadow_color: '000000'
+            shadow_offset:
+              - 10
+              - 10
+            shadow_blur: 3
+        stamps:
+          - source: logos/Fishy.Fish.png
+            position:
+              - 3206
+              - 5025
+            scale: 0.19
+            opacity: 0.5
+        post_process:
+          crop:
+            box:
+              - 1182
+              - 12
+              - 3781
+              - 5650
+          resize:
+            width: 1320
+            height: 2868
+        background_offset:
+          left: 1000
     background_image: backgrounds/gray_waves.png
     background_scale: 1.2
     phone_padding:
