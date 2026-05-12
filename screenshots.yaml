@@ -359,31 +359,33 @@ brands:
         labels:
           - text: Arrangera och delta i
             position:
-              - 1050
-              - 150
-            font_size: 250
+              - 1040
+              - 222
+            font_size: 230
             color: FFE715
             shadow_color: '#000000'
             shadow_offset:
-              - 4
-              - 4
+              - 10
+              - 10
             shadow_blur: 2
+            bold: true
           - text: Fisketävlingar
             position:
-              - 1000
-              - 100
+              - 1220
+              - 500
             font_size: 300
             color: FEE715
             shadow_color: '000000'
             shadow_offset:
-              - 4
-              - 4
-            shadow_blur: 2
+              - 10
+              - 10
+            shadow_blur: 3
+            bold: true
         stamps:
           - source: logos\Fishy.Fish.png
             position:
               - 3000
-              - 4760
+              - 5400
             scale: 0.2
             opacity: 0.5
         phone: iPhone_Plain_1
@@ -400,7 +402,19 @@ brands:
       - source: screenshots/fishy/IMG_3693.PNG
         output: 02_IMG_3693.png
         phone: iPhone_Plain_0
-        labels: []
+        labels:
+          - text: Fishy Live
+            position:
+              - 1750
+              - 200
+            font_size: 300
+            color: FFE715
+            bold: true
+            shadow_color: '000000'
+            shadow_offset:
+              - 12
+              - 12
+            shadow_blur: 3
         stamps: []
         post_process:
           crop:
