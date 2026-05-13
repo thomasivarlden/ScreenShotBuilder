@@ -10,6 +10,7 @@ from pathlib import Path
 from include.builder import print_summary, run_build
 from include.config_loader import ConfigError, load_config
 from include.logger import Logger
+from include.translations import load_translations
 from include.version import APP_NAME, APP_VERSION, banner
 
 DEFAULT_CONFIG = "screenshots.yaml"
@@ -38,6 +39,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help=f"Output dist folder (default: {DEFAULT_DIST})",
     )
     p.add_argument(
+        "-t", "--translations",
+        default=None,
+        help="Translations YAML file (default: translations.yaml alongside --config, if present)",
+    )
+    p.add_argument(
         "-v", "--verbose",
         action="store_true",
         help="Verbose (DEBUG) logging",
@@ -60,9 +66,16 @@ def main(argv: list[str] | None = None) -> int:
     assets_dir = (root / args.assets).resolve()
     dist_dir = (root / args.out).resolve()
 
-    log.info(f"Config : {config_path}")
-    log.info(f"Assets : {assets_dir}")
-    log.info(f"Dist   : {dist_dir}")
+    # Translations: explicit path or auto-discover alongside config.
+    if args.translations:
+        translations_path = (root / args.translations).resolve()
+    else:
+        translations_path = config_path.with_name("translations.yaml")
+
+    log.info(f"Config       : {config_path}")
+    log.info(f"Assets       : {assets_dir}")
+    log.info(f"Dist         : {dist_dir}")
+    log.info(f"Translations : {translations_path}" + ("" if translations_path.is_file() else " (not found, English only)"))
 
     if not assets_dir.is_dir():
         log.error(f"Assets folder missing: {assets_dir}")
@@ -74,10 +87,12 @@ def main(argv: list[str] | None = None) -> int:
         log.error(f"Config error: {exc}")
         return 2
 
+    translations = load_translations(translations_path) if translations_path.is_file() else None
+
     dist_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        report = run_build(config, assets_dir, dist_dir, log)
+        report = run_build(config, assets_dir, dist_dir, log, translations=translations)
     except Exception as exc:  # noqa: BLE001
         log.error(f"Fatal: {exc}")
         return 1

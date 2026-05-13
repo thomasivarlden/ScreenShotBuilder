@@ -1,9 +1,10 @@
 """Top-level batch driver: iterate brands x phones x screenshots, write PNGs."""
+import re
 import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from .compositor import build_composite
 from .config_loader import (
@@ -13,6 +14,7 @@ from .config_loader import (
     validate_phones,
 )
 from .logger import Logger
+from .translations import apply_translations, enabled_languages, get_settings
 
 
 @dataclass
@@ -52,14 +54,56 @@ def _human_bytes(n: float) -> str:
     return f"{n:.1f} TB"
 
 
-def _output_filename(shot_cfg: Dict[str, Any], phone_name: str, multi_phone: bool) -> str:
-    raw = shot_cfg.get("output") or Path(shot_cfg["source"]).stem + ".png"
-    if not raw.lower().endswith(".png"):
-        raw += ".png"
-    if multi_phone and phone_name:
+_STOP_WORDS = frozenset({
+    "a", "an", "the", "and", "or", "in", "on", "at", "to", "for",
+    "of", "with", "your", "my", "our", "their", "its", "is", "are",
+    "was", "were", "be", "been", "by", "from", "when", "where",
+})
+
+
+def _labels_slug(shot_cfg: Dict[str, Any], max_len: int = 32) -> str:
+    """Build a CamelCase slug from label texts, skipping common stop words.
+
+    Returns an empty string when there are no usable labels (caller falls back
+    to the source filename stem).
+    """
+    words: List[str] = []
+    for label in (shot_cfg.get("labels") or []):
+        for word in str(label.get("text", "")).split():
+            clean = re.sub(r"[^a-zA-Z0-9]", "", word)
+            if clean and clean.lower() not in _STOP_WORDS:
+                words.append(clean.capitalize())
+    slug = "".join(words)
+    return slug[:max_len]
+
+
+def _platform_tag(phone_name: str) -> str:
+    """Derive a short platform label from a phone name."""
+    n = phone_name.lower()
+    if "iphone" in n:
+        return "iOS"
+    if "android" in n or "samsung" in n:
+        return "Android"
+    return phone_name  # pass-through for generic/custom phone names
+
+
+def _output_filename(
+    shot_cfg: Dict[str, Any],
+    phone_name: str,
+    lang_code: str,
+    multilingual: bool,
+) -> str:
+    slug = _labels_slug(shot_cfg)
+    if slug:
+        stem = slug
+    else:
+        raw = shot_cfg.get("output") or Path(shot_cfg["source"]).stem + ".png"
+        if not raw.lower().endswith(".png"):
+            raw += ".png"
         stem = raw[:-4]
-        raw = f"{stem}__{phone_name}.png"
-    return raw
+    prefix = f"{lang_code}__" if multilingual else ""
+    platform = f"__{_platform_tag(phone_name)}" if phone_name else ""
+    return f"{prefix}{stem}{platform}.png" if (prefix or platform) else f"{stem}.png"
 
 
 def print_summary(report: BuildReport) -> None:
@@ -108,113 +152,126 @@ def run_build(
     assets_dir: Path,
     dist_dir: Path,
     log: Logger,
+    translations: Optional[Dict[str, Any]] = None,
 ) -> BuildReport:
-    """Build every screenshot for every brand × phone. Returns a BuildReport."""
+    """Build every screenshot for every brand × phone × language. Returns a BuildReport."""
     brands = config["brands"]
     phones = config.get("phones", {}) or {}
     validate_phones(phones)
 
+    # Determine which languages to build.
+    if translations:
+        langs = enabled_languages(translations)
+        strings = translations.get("strings", {})
+        settings = get_settings(translations)
+    else:
+        langs = [{"code": "en", "name": "English", "enabled": True}]
+        strings = {}
+        settings = {}
+    multilingual = len(langs) > 1
+
     # Pre-resolve so we can show an accurate plan and fail fast on bad refs.
-    # Per-output mode: any shot with its own `phone:` triggers the new
-    # one-shot-per-output iteration. Otherwise we fall back to the legacy
-    # brand × phone-list matrix.
     resolved: Dict[str, List[tuple[str, Dict[str, Any]]]] = {}
     per_output_mode: Dict[str, bool] = {}
-    total_shots = 0
+    shots_per_brand: Dict[str, int] = {}
     for brand_name, brand_cfg in brands.items():
         validate_brand(brand_name, brand_cfg)
         shots = brand_cfg.get("screenshots", []) or []
         any_shot_phone = any(s.get("phone") for s in shots)
         per_output_mode[brand_name] = any_shot_phone
         if any_shot_phone:
-            # Each shot resolves its own phone — count once per shot.
             for s in shots:
-                resolve_shot_phone(brand_name, brand_cfg, s, phones)  # validate
-            resolved[brand_name] = []  # not used in this mode
-            total_shots += len(shots)
+                resolve_shot_phone(brand_name, brand_cfg, s, phones)
+            resolved[brand_name] = []
+            shots_per_brand[brand_name] = len(shots)
         else:
             phone_list = resolve_brand_phones(brand_name, brand_cfg, phones)
             resolved[brand_name] = phone_list
-            total_shots += len(phone_list) * len(shots)
+            shots_per_brand[brand_name] = len(phone_list) * len(shots)
 
+    total_shots = sum(shots_per_brand.values()) * len(langs)
     log.info(
-        f"Planning {total_shots} image(s) across {len(brands)} brand(s) "
-        f"and {len(phones)} registered phone(s)"
+        f"Planning {total_shots} image(s) across {len(brands)} brand(s), "
+        f"{len(phones)} registered phone(s), {len(langs)} language(s)"
     )
 
     report = BuildReport(dist_dir=dist_dir, started=time.time())
     counter = 0
 
-    for brand_name, brand_cfg in brands.items():
-        brand_out = dist_dir / brand_name
-        brand_out.mkdir(parents=True, exist_ok=True)
-        shots = brand_cfg.get("screenshots", []) or []
+    for lang in langs:
+        lang_code = lang["code"]
+        for brand_name, brand_cfg in brands.items():
+            brand_out = dist_dir / brand_name
+            brand_out.mkdir(parents=True, exist_ok=True)
+            shots = brand_cfg.get("screenshots", []) or []
 
-        if per_output_mode[brand_name]:
-            log.info(f"Brand: {brand_name}  ->  {brand_out}  ({len(shots)} output(s))")
-            for shot_cfg in shots:
-                counter += 1
-                phone_name, phone_cfg = resolve_shot_phone(
-                    brand_name, brand_cfg, shot_cfg, phones,
-                )
+            if per_output_mode[brand_name]:
+                log.info(f"[{lang_code}] Brand: {brand_name}  ->  {brand_out}  ({len(shots)} output(s))")
+                for shot_cfg in shots:
+                    counter += 1
+                    phone_name, phone_cfg = resolve_shot_phone(
+                        brand_name, brand_cfg, shot_cfg, phones,
+                    )
+                    merged_brand = {**brand_cfg, **phone_cfg}
+                    translated_shot = apply_translations(shot_cfg, lang_code, strings, settings)
+                    out_name = _output_filename(shot_cfg, phone_name, lang_code, multilingual)
+                    out_path = brand_out / out_name
+                    tag = f"[{lang_code}] {brand_name} [{phone_name}] :: {out_name}" if phone_name \
+                        else f"[{lang_code}] {brand_name} :: {out_name}"
+                    log.step(counter, total_shots, tag)
+                    t0 = time.time()
+                    try:
+                        image = build_composite(merged_brand, translated_shot, assets_dir)
+                        image.save(out_path, format="PNG", optimize=True)
+                        report.succeeded.append(
+                            ShotResult(
+                                brand=brand_name, phone=phone_name, name=out_name,
+                                path=out_path, width=image.size[0], height=image.size[1],
+                                bytes=out_path.stat().st_size, seconds=time.time() - t0,
+                            )
+                        )
+                        log.debug(f"  wrote {out_path} ({image.size[0]}x{image.size[1]})")
+                    except Exception as exc:  # noqa: BLE001
+                        log.error(f"Failed: [{lang_code}] {brand_name} / {out_name}: {exc}")
+                        report.failed.append(
+                            {"brand": brand_name, "name": out_name, "error": str(exc)}
+                        )
+                continue
+
+            # Legacy: brand × phone-list matrix.
+            phone_list = resolved[brand_name]
+            multi_phone = len(phone_list) > 1
+            log.info(
+                f"[{lang_code}] Brand: {brand_name}  ->  {brand_out}  "
+                f"({len(phone_list)} phone{'s' if multi_phone else ''})"
+            )
+            for phone_name, phone_cfg in phone_list:
                 merged_brand = {**brand_cfg, **phone_cfg}
-                out_name = _output_filename(shot_cfg, phone_name, multi_phone=False)
-                out_path = brand_out / out_name
-                tag = f"{brand_name} [{phone_name}] :: {out_name}" if phone_name \
-                    else f"{brand_name} :: {out_name}"
-                log.step(counter, total_shots, tag)
-                t0 = time.time()
-                try:
-                    image = build_composite(merged_brand, shot_cfg, assets_dir)
-                    image.save(out_path, format="PNG", optimize=True)
-                    report.succeeded.append(
-                        ShotResult(
-                            brand=brand_name, phone=phone_name, name=out_name,
-                            path=out_path, width=image.size[0], height=image.size[1],
-                            bytes=out_path.stat().st_size, seconds=time.time() - t0,
+                for shot_cfg in shots:
+                    counter += 1
+                    translated_shot = apply_translations(shot_cfg, lang_code, strings, settings)
+                    out_name = _output_filename(shot_cfg, phone_name, lang_code, multilingual)
+                    out_path = brand_out / out_name
+                    tag = f"[{lang_code}] {brand_name} [{phone_name}] :: {out_name}" if phone_name \
+                        else f"[{lang_code}] {brand_name} :: {out_name}"
+                    log.step(counter, total_shots, tag)
+                    t0 = time.time()
+                    try:
+                        image = build_composite(merged_brand, translated_shot, assets_dir)
+                        image.save(out_path, format="PNG", optimize=True)
+                        report.succeeded.append(
+                            ShotResult(
+                                brand=brand_name, phone=phone_name, name=out_name,
+                                path=out_path, width=image.size[0], height=image.size[1],
+                                bytes=out_path.stat().st_size, seconds=time.time() - t0,
+                            )
                         )
-                    )
-                    log.debug(f"  wrote {out_path} ({image.size[0]}x{image.size[1]})")
-                except Exception as exc:  # noqa: BLE001
-                    log.error(f"Failed: {brand_name} / {out_name}: {exc}")
-                    report.failed.append(
-                        {"brand": brand_name, "name": out_name, "error": str(exc)}
-                    )
-            continue
-
-        # Legacy: brand × phone-list matrix.
-        phone_list = resolved[brand_name]
-        multi_phone = len(phone_list) > 1
-        log.info(
-            f"Brand: {brand_name}  ->  {brand_out}  "
-            f"({len(phone_list)} phone{'s' if multi_phone else ''})"
-        )
-        for phone_name, phone_cfg in phone_list:
-            merged_brand = {**brand_cfg, **phone_cfg}
-            for shot_cfg in shots:
-                counter += 1
-                out_name = _output_filename(shot_cfg, phone_name, multi_phone)
-                out_path = brand_out / out_name
-                tag = f"{brand_name} [{phone_name}] :: {out_name}" if phone_name \
-                    else f"{brand_name} :: {out_name}"
-                log.step(counter, total_shots, tag)
-                t0 = time.time()
-                try:
-                    image = build_composite(merged_brand, shot_cfg, assets_dir)
-                    image.save(out_path, format="PNG", optimize=True)
-                    report.succeeded.append(
-                        ShotResult(
-                            brand=brand_name, phone=phone_name, name=out_name,
-                            path=out_path, width=image.size[0], height=image.size[1],
-                            bytes=out_path.stat().st_size, seconds=time.time() - t0,
+                        log.debug(f"  wrote {out_path} ({image.size[0]}x{image.size[1]})")
+                    except Exception as exc:  # noqa: BLE001
+                        log.error(f"Failed: [{lang_code}] {brand_name} / {out_name}: {exc}")
+                        report.failed.append(
+                            {"brand": brand_name, "name": out_name, "error": str(exc)}
                         )
-                    )
-                    log.debug(f"  wrote {out_path} ({image.size[0]}x{image.size[1]})")
-                except Exception as exc:  # noqa: BLE001
-                    log.error(f"Failed: {brand_name} / {out_name}: {exc}")
-                    report.failed.append(
-                        {"brand": brand_name, "name": out_name, "error": str(exc)}
-                    )
 
     report.finished = time.time()
     return report

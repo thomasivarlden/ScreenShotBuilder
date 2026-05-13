@@ -1,0 +1,65 @@
+settings:
+  base_language: en
+  label_align: center
+languages:
+- code: en
+  name: English
+  enabled: true
+- code: sv
+  name: Svenska
+  enabled: true
+- code: de
+  name: Deutsch
+  enabled: true
+- code: 'no'
+  name: Norsk
+  enabled: true
+- code: fi
+  name: Suomi
+  enabled: true
+strings:
+  Arrange and participate in:
+    sv: Arrangera och delta i
+    de: Veranstalte und nimm teil an
+    'no': Arranger og delta i
+    fi: Järjestä ja osallistu
+  Fishing Tournaments:
+    sv: Fisketävlingar
+    de: Angelwettbewerben
+    'no': Fiskekonkurranser
+    fi: Kalakilpailuihin
+  Fishy Live:
+    sv: Fishy Live
+    de: Fishy Live
+    'no': Fishy Live
+    fi: Fishy Live
+  Live Leaderboards:
+    sv: Liveresultat
+    de: Live-Ranglisten
+    'no': Live resultattavler
+    fi: Livetulostaulut
+  Report your Catches:
+    sv: Registrera fångster
+    de: Deine Fänge eintragen
+    'no': Rapporter fangstene
+    fi: Kirjaa saaliisi
+  Syncs when network is available:
+    sv: Synkas när nätverk finns
+    de: Sync bei Netzwerkverbindung
+    'no': Synk når nettverk er tilgjengelig
+    fi: Synk kun verkko on saatavilla
+  Updated in real time:
+    sv: Uppdateras i realtid
+    de: In Echtzeit aktualisiert
+    'no': Oppdateres i sanntid
+    fi: Päivittyy reaaliajassa
+  Hello, world!:
+    sv: Hej, världen!
+    de: Hallo, Welt!
+    'no': Hei, verden!
+    fi: Hei, maailma!
+  Catch more fish:
+    sv: Fånga mer fisk
+    de: Mehr Fische fangen
+    'no': Fang mer fisk
+    fi: Pyydä enemmän kalaa

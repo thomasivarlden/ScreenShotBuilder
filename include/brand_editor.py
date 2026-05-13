@@ -26,6 +26,7 @@ from PIL import Image, ImageTk
 from . import brand_io
 from .compositor import build_composite
 from .config_loader import resolve_shot_phone
+from .translations import apply_translations, enabled_languages, get_settings
 
 
 # ----- dark-ish palette ---------------------------------------------------
@@ -168,12 +169,14 @@ class BrandsTab(ttk.Frame):
         data: Any,
         assets_dir: Path,
         on_dirty: Callable[[], None],
+        translations_getter: Callable[[], Any] | None = None,
     ) -> None:
         install_dark_theme(parent)
         super().__init__(parent)
         self.data = data
         self.assets_dir = assets_dir
         self.on_dirty = on_dirty
+        self._translations_getter = translations_getter
 
         # The currently-selected node's logical address.
         self._sel_kind: str = ""        # "brand"|"shot"|"label"|"stamp"|""
@@ -296,6 +299,18 @@ class BrandsTab(ttk.Frame):
             .pack(side="left", padx=4)
         ttk.Button(bar, text="↻", width=3, command=self._force_render_preview)\
             .pack(side="left")
+
+        ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=6)
+        ttk.Label(bar, text="Language:").pack(side="left")
+        self._preview_lang_var = tk.StringVar(value="en")
+        self._preview_lang_combo = ttk.Combobox(
+            bar, textvariable=self._preview_lang_var,
+            values=["en"], state="readonly", width=10,
+        )
+        self._preview_lang_combo.pack(side="left", padx=(4, 0))
+        self._preview_lang_combo.bind("<<ComboboxSelected>>",
+                                      lambda _e: self._on_preview_lang_change())
+
         self.preview_status_var = tk.StringVar(value="")
         ttk.Label(bar, textvariable=self.preview_status_var,
                   style="Dim.TLabel").pack(side="left", padx=12)
@@ -2175,6 +2190,7 @@ class BrandsTab(ttk.Frame):
         return sel[0] if sel else None
 
     def _on_tree_select(self) -> None:
+        self.refresh_language_list()
         sel = self.tree.selection()
         if not sel:
             self._set_selection("", None, None, None, None)
@@ -2507,9 +2523,29 @@ class BrandsTab(ttk.Frame):
         delay = 0 if target != self._cur_preview_key else debounce_ms
         self._render_after_id = self.after(delay, self._render_preview_now)
 
+    def refresh_language_list(self) -> None:
+        """Update the language dropdown from the current translations data."""
+        if self._translations_getter is None:
+            return
+        try:
+            trans_data = self._translations_getter()
+            langs = enabled_languages(trans_data)
+            codes = [l["code"] for l in langs] or ["en"]
+        except Exception:
+            codes = ["en"]
+        current = self._preview_lang_var.get()
+        self._preview_lang_combo.configure(values=codes)
+        if current not in codes:
+            self._preview_lang_var.set(codes[0])
+
+    def _on_preview_lang_change(self) -> None:
+        self._last_render_sig = None  # force re-render with new language
+        self._render_preview_now()
+
     def _force_render_preview(self) -> None:
         """Manual reload — bypass the input-signature cache (e.g. for on-disk
         asset changes that don't show in the YAML)."""
+        self.refresh_language_list()
         self._last_render_sig = None
         self._render_preview_now()
 
@@ -2563,6 +2599,17 @@ class BrandsTab(ttk.Frame):
                 f"{brand_name} / {shot.get('output') or '?'} [{phone_name or '?'}]"
             )
             return
+
+        # Apply translation for the selected preview language.
+        lang_code = self._preview_lang_var.get() or "en"
+        if lang_code != "en" and self._translations_getter is not None:
+            try:
+                trans_data = self._translations_getter()
+                strings = trans_data.get("strings", {})
+                settings = get_settings(trans_data)
+                shot = apply_translations(shot, lang_code, strings, settings)
+            except Exception:
+                pass
 
         token = self._render_token = self._render_token + 1
         self.preview_status_var.set("Rendering…")

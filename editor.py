@@ -18,6 +18,8 @@ from include.brand_editor import BrandsTab
 from include.compositor import build_composite
 from include.corner_editor import CORNER_KEYS, CornerEditor
 from include.generate_tab import GenerateTab
+from include.translations import save_translations
+from include.translations_tab import TranslationsTab
 from include.version import APP_NAME, APP_VERSION, banner
 from include.yaml_io import (
     load_round_trip,
@@ -35,6 +37,7 @@ class EditorApp:
         self.root = root
         self.config_path = config_path
         self.assets_dir = assets_dir
+        self.translations_path = config_path.with_name("translations.yaml")
         self.dist_dir = (config_path.parent / "dist").resolve()
         self._dirty = False
         self._screenshot_path: Path | None = None
@@ -124,9 +127,20 @@ class EditorApp:
         brands_tab = BrandsTab(
             self.notebook, self.data, self.assets_dir,
             on_dirty=lambda: self._set_dirty(True),
+            translations_getter=self._get_translations_data,
         )
-        self.notebook.add(brands_tab, text="Configuration")
+        self.notebook.add(brands_tab, text="Outputs")
         self.brands_tab = brands_tab
+
+        translations_tab = TranslationsTab(
+            self.notebook,
+            config_getter=lambda: self.data,
+            translations_path=self.translations_path,
+            on_dirty=lambda: self._set_dirty(True),
+            on_translation_change=self._on_translation_change,
+        )
+        self.notebook.add(translations_tab, text="Translations")
+        self.translations_tab = translations_tab
 
         generate_tab = GenerateTab(
             self.notebook,
@@ -134,6 +148,7 @@ class EditorApp:
             config_path=self.config_path,
             assets_dir=self.assets_dir,
             on_request_save=self._save_for_generate,
+            translations_path=self.translations_path,
         )
         self.notebook.add(generate_tab, text="Generate")
         self.generate_tab = generate_tab
@@ -141,6 +156,9 @@ class EditorApp:
         assets_tab = AssetsTab(self.notebook, self.data, self.assets_dir)
         self.notebook.add(assets_tab, text="Assets")
         self.assets_tab = assets_tab
+
+        self._translations_tab_id = self.notebook.index(translations_tab)
+        self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
         toolbar = ttk.Frame(corner_tab, padding=8)
         toolbar.pack(side="top", fill="x")
@@ -471,6 +489,20 @@ class EditorApp:
         except Exception:
             webbrowser.open(path.as_uri())
 
+    def _get_translations_data(self):
+        return self.translations_tab.get_data()
+
+    def _on_tab_changed(self, _event: tk.Event = None) -> None:
+        """Trigger a preview re-render once when leaving the Translations tab."""
+        current = self.notebook.index(self.notebook.select())
+        if current != self._translations_tab_id:
+            self._on_translation_change()
+
+    def _on_translation_change(self) -> None:
+        """Invalidate and re-render the brand preview with current translations."""
+        self.brands_tab._last_render_sig = None
+        self.brands_tab._schedule_preview_render(debounce_ms=200)
+
     def _save(self) -> None:
         # Commit live corner values for the currently-selected phone (if any)
         # before writing — brand-tab edits already sync into self.data on the
@@ -481,11 +513,12 @@ class EditorApp:
                 update_phone_corners(self.data, name, self.editor.get_corners())
                 update_phone_corner_radius(self.data, name, self._parse_radius())
             save_round_trip(self.config_path, self.data)
+            save_translations(self.translations_path, self.translations_tab.get_data())
         except Exception as exc:  # noqa: BLE001
             messagebox.showerror("Save failed", str(exc))
             return
         self._set_dirty(False)
-        self.status_var.set(f"Saved changes to {self.config_path.name}.")
+        self.status_var.set(f"Saved {self.config_path.name} + {self.translations_path.name}.")
 
     def _save_for_generate(self) -> bool:
         """Called by the Generate tab before launching a build.

@@ -26,11 +26,13 @@ class GenerateTab(ttk.Frame):
         config_path: Path,
         assets_dir: Path,
         on_request_save: Callable[[], bool],
+        translations_path: Path | None = None,
     ) -> None:
         super().__init__(parent)
         self.repo_root = repo_root
         self.config_path = config_path
         self.assets_dir = assets_dir
+        self.translations_path = translations_path
         self.dist_dir = (repo_root / "dist").resolve()
         self.on_request_save = on_request_save
         self._proc: subprocess.Popen | None = None
@@ -141,6 +143,8 @@ class GenerateTab(ttk.Frame):
             "-a", str(self.assets_dir),
             "-o", str(self.dist_dir),
         ]
+        if self.translations_path and self.translations_path.is_file():
+            cmd += ["-t", str(self.translations_path)]
         self._append_log(f"$ {' '.join(cmd)}\n\n")
 
         try:

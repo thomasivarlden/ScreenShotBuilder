@@ -112,6 +112,30 @@ def _load_font(font_path: str | None, size: int, assets_dir: Path,
         return ImageFont.load_default()
 
 
+def _measure_text_bbox(
+    text: str,
+    pos: Point,
+    font: ImageFont.FreeTypeFont,
+    anchor: str | None,
+) -> tuple[float, float, float, float]:
+    """Return (left, top, right, bottom) of `text` rendered at `pos` with `anchor`."""
+    dummy = Image.new("L", (1, 1))
+    bbox = ImageDraw.Draw(dummy).textbbox(pos, text, font=font, anchor=anchor)
+    return bbox
+
+
+def _fit_anchor(fit_align: str, source_anchor: str | None) -> str:
+    """Build a PIL anchor string with the horizontal component replaced by fit_align.
+
+    When source_anchor is None, PIL defaults to 'la' (left, ascender-top), so
+    we preserve 'a' as the vertical component — not 's' (baseline), which would
+    shift text up significantly at large font sizes.
+    """
+    v = source_anchor[1] if source_anchor and len(source_anchor) >= 2 else "a"
+    h = {"center": "m", "right": "r"}.get(fit_align, "l")
+    return h + v
+
+
 def _draw_label(
     canvas: Image.Image,
     label: Dict[str, Any],
@@ -128,6 +152,28 @@ def _draw_label(
     font = _load_font(label.get("font"), int(label.get("font_size") or 48), assets_dir,
                       bold=bool(label.get("bold")))
     anchor = label.get("anchor") or None
+
+    # Fit-align: adjust pos/anchor so the translated text aligns with the
+    # spatial center or right edge of the source (English) text.
+    fit_align = label.get("_fit_align")
+    if fit_align in ("center", "right"):
+        src_text = str(label.get("_source_text", ""))
+        src_pos = _to_point(label.get("_source_position", list(pos)))
+        src_anchor = label.get("_source_anchor") or None
+        src_font = _load_font(
+            label.get("_source_font"),
+            int(label.get("_source_font_size") or 48),
+            assets_dir,
+            bold=bool(label.get("_source_bold")),
+        )
+        if src_text:
+            l, _t, r, _b = _measure_text_bbox(src_text, src_pos, src_font, src_anchor)
+            if fit_align == "center":
+                target_x = (l + r) / 2.0
+            else:  # right
+                target_x = r
+            pos = (target_x, pos[1])
+            anchor = _fit_anchor(fit_align, src_anchor)
 
     draw = ImageDraw.Draw(canvas)
     if shadow_color:
