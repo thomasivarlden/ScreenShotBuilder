@@ -63,62 +63,62 @@ strings:
     de: Mehr Fische fangen
     'no': Fang mer fisk
     fi: Pyydä enemmän kalaa
-  Logga in:
+  Log in:
     sv: Logga in
     de: Anmelden
     'no': Logg inn
     fi: Kirjaudu sisään
-  med din tävlingskod:
+  with your tournament code:
     sv: med din tävlingskod
     de: mit deinem Wettkampfcode
     'no': med din konkurransekode
     fi: kilpailukoodillasi
-  All tävlingsinfo:
+  All tournament info:
     sv: All tävlingsinfo
     de: Alle Wettkampfinfos
     'no': All konkurranseinfo
     fi: Kaikki kilpailutiedot
-  på ett ställe:
+  in one place:
     sv: på ett ställe
     de: an einem Ort
     'no': på ett sted
     fi: yhdessä paikassa
-  Reglerna:
+  The rules:
     sv: Reglerna
     de: Die Regeln
     'no': Reglene
     fi: Säännöt
-  alltid till hands:
+  always at hand:
     sv: alltid till hands
     de: immer griffbereit
     'no': alltid for hånden
     fi: aina käden ulottuvilla
-  Följ topplistan:
+  Follow the leaderboard:
     sv: Följ topplistan
     de: Folge der Rangliste
     'no': Følg topplisten
     fi: Seuraa tulostaulua
-  i realtid:
+  in real time:
     sv: i realtid
     de: in Echtzeit
     'no': i sanntid
     fi: reaaliajassa
-  Håll koll:
+  Keep track:
     sv: Håll koll
     de: Behalte den Überblick
     'no': Hold oversikt
     fi: Pysy kärryillä
-  på dina poäng:
+  of your points:
     sv: på dina poäng
     de: über deine Punkte
     'no': over poengene dine
     fi: pisteistäsi
-  Rapportera:
+  Report:
     sv: Rapportera
     de: Melde
     'no': Rapporter
     fi: Raportoi
-  dina fångster:
+  your catches:
     sv: dina fångster
     de: deine Fänge
     'no': fangstene dine

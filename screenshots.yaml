@@ -729,7 +729,7 @@ brands:
         output: 01_login.png
         phone: iPhone_Plain_0
         labels:
-          - text: Logga in
+          - text: Log in
             position: [2488, 222]
             anchor: ma
             font_size: 195
@@ -738,7 +738,7 @@ brands:
             shadow_color: '#000000'
             shadow_offset: [10, 10]
             shadow_blur: 2
-          - text: med din tävlingskod
+          - text: with your tournament code
             position: [2488, 500]
             anchor: ma
             font_size: 240
@@ -757,7 +757,7 @@ brands:
         output: 02_info.png
         phone: iPhone_Plain_1
         labels:
-          - text: All tävlingsinfo
+          - text: All tournament info
             position: [2231, 222]
             anchor: ma
             font_size: 195
@@ -766,7 +766,7 @@ brands:
             shadow_color: '#000000'
             shadow_offset: [10, 10]
             shadow_blur: 2
-          - text: på ett ställe
+          - text: in one place
             position: [2231, 500]
             anchor: ma
             font_size: 240
@@ -787,7 +787,7 @@ brands:
         output: 03_rules.png
         phone: iPhone_Plain_2
         labels:
-          - text: Reglerna
+          - text: The rules
             position: [2255, 222]
             anchor: ma
             font_size: 195
@@ -796,7 +796,7 @@ brands:
             shadow_color: '#000000'
             shadow_offset: [10, 10]
             shadow_blur: 2
-          - text: alltid till hands
+          - text: always at hand
             position: [2255, 500]
             anchor: ma
             font_size: 240
@@ -817,7 +817,7 @@ brands:
         output: 04_leaderboard.png
         phone: iPhone_Plain_0
         labels:
-          - text: Följ topplistan
+          - text: Follow the leaderboard
             position: [2488, 222]
             anchor: ma
             font_size: 195
@@ -826,7 +826,7 @@ brands:
             shadow_color: '#000000'
             shadow_offset: [10, 10]
             shadow_blur: 2
-          - text: i realtid
+          - text: in real time
             position: [2488, 500]
             anchor: ma
             font_size: 240
@@ -845,7 +845,7 @@ brands:
         output: 05_reports.png
         phone: iPhone_Plain_1
         labels:
-          - text: Håll koll
+          - text: Keep track
             position: [2231, 222]
             anchor: ma
             font_size: 195
@@ -854,7 +854,7 @@ brands:
             shadow_color: '#000000'
             shadow_offset: [10, 10]
             shadow_blur: 2
-          - text: på dina poäng
+          - text: of your points
             position: [2231, 500]
             anchor: ma
             font_size: 240
@@ -875,7 +875,7 @@ brands:
         output: 06_report_catch.png
         phone: iPhone_Plain_2
         labels:
-          - text: Rapportera
+          - text: Report
             position: [2255, 222]
             anchor: ma
             font_size: 195
@@ -884,7 +884,7 @@ brands:
             shadow_color: '#000000'
             shadow_offset: [10, 10]
             shadow_blur: 2
-          - text: dina fångster
+          - text: your catches
             position: [2255, 500]
             anchor: ma
             font_size: 240
@@ -906,7 +906,7 @@ brands:
         output: android_01_login.png
         phone: Android_Plain_0
         labels:
-          - text: Logga in
+          - text: Log in
             position: [2484, 226]
             anchor: ma
             font_size: 195
@@ -915,7 +915,7 @@ brands:
             shadow_color: '#000000'
             shadow_offset: [10, 10]
             shadow_blur: 2
-          - text: med din tävlingskod
+          - text: with your tournament code
             position: [2484, 504]
             anchor: ma
             font_size: 240
@@ -934,7 +934,7 @@ brands:
         output: android_02_info.png
         phone: Android_Plain_1
         labels:
-          - text: All tävlingsinfo
+          - text: All tournament info
             position: [2187, 318]
             anchor: ma
             font_size: 195
@@ -943,7 +943,7 @@ brands:
             shadow_color: '#000000'
             shadow_offset: [10, 10]
             shadow_blur: 2
-          - text: på ett ställe
+          - text: in one place
             position: [2187, 596]
             anchor: ma
             font_size: 240
@@ -964,7 +964,7 @@ brands:
         output: android_03_rules.png
         phone: Android_Plain_2
         labels:
-          - text: Reglerna
+          - text: The rules
             position: [2073, 299]
             anchor: ma
             font_size: 195
@@ -973,7 +973,7 @@ brands:
             shadow_color: '#000000'
             shadow_offset: [10, 10]
             shadow_blur: 2
-          - text: alltid till hands
+          - text: always at hand
             position: [2073, 577]
             anchor: ma
             font_size: 240
@@ -994,7 +994,7 @@ brands:
         output: android_04_leaderboard.png
         phone: Android_Plain_0
         labels:
-          - text: Följ topplistan
+          - text: Follow the leaderboard
             position: [2484, 226]
             anchor: ma
             font_size: 195
@@ -1003,7 +1003,7 @@ brands:
             shadow_color: '#000000'
             shadow_offset: [10, 10]
             shadow_blur: 2
-          - text: i realtid
+          - text: in real time
             position: [2484, 504]
             anchor: ma
             font_size: 240
@@ -1022,7 +1022,7 @@ brands:
         output: android_05_reports.png
         phone: Android_Plain_1
         labels:
-          - text: Håll koll
+          - text: Keep track
             position: [2187, 318]
             anchor: ma
             font_size: 195
@@ -1031,7 +1031,7 @@ brands:
             shadow_color: '#000000'
             shadow_offset: [10, 10]
             shadow_blur: 2
-          - text: på dina poäng
+          - text: of your points
             position: [2187, 596]
             anchor: ma
             font_size: 240
@@ -1052,7 +1052,7 @@ brands:
         output: android_06_report_catch.png
         phone: Android_Plain_2
         labels:
-          - text: Rapportera
+          - text: Report
             position: [2073, 299]
             anchor: ma
             font_size: 195
@@ -1061,7 +1061,7 @@ brands:
             shadow_color: '#000000'
             shadow_offset: [10, 10]
             shadow_blur: 2
-          - text: dina fångster
+          - text: your catches
             position: [2073, 577]
             anchor: ma
             font_size: 240
