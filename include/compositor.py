@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Sequence, Tuple
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 from .perspective import warp_to_quad
-from .postprocess import apply_post_process
+from .postprocess import _resolve_crop_box, apply_post_process
 
 Point = Tuple[float, float]
 
@@ -136,10 +136,37 @@ def _fit_anchor(fit_align: str, source_anchor: str | None) -> str:
     return h + v
 
 
+def _autoscale_to_viewport(
+    text: str,
+    pos: Point,
+    font: ImageFont.FreeTypeFont,
+    anchor: str | None,
+    viewport: tuple[float, float],
+    margin: float,
+) -> float:
+    """Return a font-size scale factor (<=1.0) that keeps `text` within viewport.
+
+    `viewport` is (left_x, right_x) in canvas pixels — the horizontal extent of
+    the visible region after any post-process crop. The scale is chosen so the
+    rendered bbox lies within [left_x + margin, right_x - margin] while keeping
+    the anchor point fixed. Returns 1.0 when no scaling is needed.
+    """
+    vl, vr = viewport
+    l, _t, r, _b = _measure_text_bbox(text, pos, font, anchor)
+    if l >= vl + margin and r <= vr - margin:
+        return 1.0
+    left_extent = pos[0] - l
+    right_extent = r - pos[0]
+    scale_left = ((pos[0] - (vl + margin)) / left_extent) if left_extent > 0 else 1.0
+    scale_right = (((vr - margin) - pos[0]) / right_extent) if right_extent > 0 else 1.0
+    return max(0.1, min(1.0, scale_left, scale_right))
+
+
 def _draw_label(
     canvas: Image.Image,
     label: Dict[str, Any],
     assets_dir: Path,
+    viewport_x: tuple[float, float] | None = None,
 ) -> None:
     text = str(label.get("text", ""))
     if not text:
@@ -149,7 +176,8 @@ def _draw_label(
     shadow_color = _norm_color(label.get("shadow_color"))
     shadow_offset = label.get("shadow_offset", [4, 4])
     shadow_blur = max(0, int(label.get("shadow_blur") or 0))
-    font = _load_font(label.get("font"), int(label.get("font_size") or 48), assets_dir,
+    font_size = int(label.get("font_size") or 48)
+    font = _load_font(label.get("font"), font_size, assets_dir,
                       bold=bool(label.get("bold")))
     anchor = label.get("anchor") or None
 
@@ -174,6 +202,19 @@ def _draw_label(
                 target_x = r
             pos = (target_x, pos[1])
             anchor = _fit_anchor(fit_align, src_anchor)
+
+    # Auto-scale: shrink the font if the rendered text would extend past the
+    # visible viewport edges. Viewport defaults to the full canvas when no crop
+    # is in play. Margin is 1.5% of the viewport width (floor 24 px).
+    vl, vr = viewport_x if viewport_x is not None else (0.0, float(canvas.width))
+    margin = max(24.0, (vr - vl) * 0.015)
+    scale = _autoscale_to_viewport(text, pos, font, anchor, (vl, vr), margin)
+    if scale < 1.0:
+        font_size = max(8, int(round(font_size * scale)))
+        font = _load_font(label.get("font"), font_size, assets_dir,
+                          bold=bool(label.get("bold")))
+        shadow_offset = [float(shadow_offset[0]) * scale, float(shadow_offset[1]) * scale]
+        shadow_blur = max(0, int(round(shadow_blur * scale)))
 
     draw = ImageDraw.Draw(canvas)
     if shadow_color:
@@ -295,16 +336,25 @@ def build_composite(
     phone_canvas.alpha_composite(base)
     canvas.alpha_composite(phone_canvas, dest=(pad_l, pad_t))
 
+    # Post-process: shot-level overrides brand-level entirely if present.
+    pp_cfg = shot_cfg.get("post_process", brand_cfg.get("post_process"))
+
+    # Resolve the visible horizontal viewport so label autoscale fits against
+    # the cropped region rather than the full padded canvas.
+    viewport_x: tuple[float, float] = (0.0, float(canvas.width))
+    if pp_cfg and pp_cfg.get("crop") is not None:
+        crop_box = _resolve_crop_box(canvas, pp_cfg["crop"])
+        if crop_box is not None:
+            viewport_x = (float(crop_box[0]), float(crop_box[2]))
+
     # Labels and stamps are drawn on the full padded canvas so that their
     # x/y coordinates match what the preview coordinate readout shows.
     for label in shot_cfg.get("labels", []) or []:
-        _draw_label(canvas, label, assets_dir)
+        _draw_label(canvas, label, assets_dir, viewport_x=viewport_x)
 
     for stamp_cfg in shot_cfg.get("stamps", []) or []:
         _apply_stamp(canvas, stamp_cfg, assets_dir)
 
-    # Post-process: shot-level overrides brand-level entirely if present.
-    pp_cfg = shot_cfg.get("post_process", brand_cfg.get("post_process"))
     canvas = apply_post_process(canvas, pp_cfg)
 
     final_size = brand_cfg.get("output_size")

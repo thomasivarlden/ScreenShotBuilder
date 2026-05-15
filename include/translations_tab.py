@@ -354,9 +354,6 @@ class TranslationsTab(ttk.Frame):
         cols = list(self._tree.cget("columns"))
         if col_num < 0 or col_num >= len(cols):
             return
-        col_name = cols[col_num]
-        if col_name == "english":
-            return  # English is read-only
         values = list(self._tree.item(item, "values"))
         current = values[col_num] if col_num < len(values) else ""
         self._active_editor = _CellEditor(
@@ -369,25 +366,62 @@ class TranslationsTab(ttk.Frame):
         if col_num < 0 or col_num >= len(cols):
             return
         col_name = cols[col_num]
+        new_value = value.strip()
+
         if col_name == "english":
+            self._rename_english_string(item, new_value)
             return
 
         # Update in-memory data.
         strings = self._data.setdefault("strings", {})
         if item not in strings:
             strings[item] = {}
-        if value.strip():
-            strings[item][col_name] = value.strip()
+        if new_value:
+            strings[item][col_name] = new_value
         else:
             strings[item].pop(col_name, None)
 
         # Update treeview cell.
         values = list(self._tree.item(item, "values"))
         if col_num < len(values):
-            values[col_num] = value.strip()
+            values[col_num] = new_value
         self._tree.item(item, values=values)
         self._update_status_count()
         self._on_dirty()
+
+    def _rename_english_string(self, old: str, new: str) -> None:
+        """Rename an English source string and propagate to all matching labels.
+
+        Updates the key in self._data["strings"] (preserving order) and rewrites
+        every label.text in the loaded config whose value matches `old`.
+        """
+        if not new or new == old:
+            return
+        strings = self._data.setdefault("strings", {})
+        if new in strings:
+            messagebox.showerror(
+                "Rename English string",
+                f"'{new}' already exists as a source string.",
+                parent=self,
+            )
+            self._refresh_table()
+            return
+
+        self._data["strings"] = {
+            (new if k == old else k): v for k, v in strings.items()
+        }
+
+        config = self._config_getter() or {}
+        for brand_cfg in (config.get("brands") or {}).values():
+            for shot in (brand_cfg.get("screenshots") or []):
+                for label in (shot.get("labels") or []):
+                    if str(label.get("text", "")) == old:
+                        label["text"] = new
+
+        self._refresh_table()
+        self._on_dirty()
+        if self._on_translation_change:
+            self._on_translation_change()
 
     def _update_status_count(self) -> None:
         strings = self._data.get("strings", {})

@@ -293,6 +293,70 @@ phones:
         - 5090
     corner_radius: 250
 
+  ipad1:
+    base_image: phones/ipad1.png             # 4340 x 5800
+    screen_corners:
+      top_left:
+        - 628
+        - 837
+      top_right:
+        - 3710
+        - 838
+      bottom_right:
+        - 3710
+        - 4914
+      bottom_left:
+        - 628
+        - 4918
+
+  ipad2:
+    base_image: phones/ipad2.png             # 4340 x 5800
+    screen_corners:
+      top_left:
+        - 758
+        - 886
+      top_right:
+        - 3585
+        - 886
+      bottom_right:
+        - 3585
+        - 4730
+      bottom_left:
+        - 761
+        - 4725
+
+  ipad3:
+    base_image: phones/ipad3.png             # 4340 x 5800
+    screen_corners:
+      top_left: [0, 0]
+      top_right: [0, 0]
+      bottom_right: [0, 0]
+      bottom_left: [0, 0]
+
+  tablet1:
+    base_image: phones/tablet1.png           # 3474 x 5108
+    screen_corners:
+      top_left:
+        - 595
+        - 100
+      top_right:
+        - 3401
+        - 115
+      bottom_right:
+        - 3393
+        - 4986
+      bottom_left:
+        - 581
+        - 4986
+
+  tablet2:
+    base_image: phones/tablet2.png           # 3968 x 6344
+    screen_corners:
+      top_left: [0, 0]
+      top_right: [0, 0]
+      bottom_right: [0, 0]
+      bottom_left: [0, 0]
+
 brands:
 
   # AcmeInc:
@@ -738,7 +802,7 @@ brands:
             shadow_color: '#000000'
             shadow_offset: [10, 10]
             shadow_blur: 2
-          - text: with your tournament code
+          - text: with your code
             position: [2488, 500]
             anchor: ma
             font_size: 240
@@ -753,6 +817,7 @@ brands:
           resize:
             width: 1320
             height: 2868
+        stamps: []
       - source: screenshots/sportfiskarna/IMG_3773.PNG
         output: 02_info.png
         phone: iPhone_Plain_1
@@ -783,6 +848,7 @@ brands:
             height: 2868
         background_offset:
           left: 500
+        stamps: []
       - source: screenshots/sportfiskarna/IMG_3774.PNG
         output: 03_rules.png
         phone: iPhone_Plain_2
@@ -813,6 +879,7 @@ brands:
             height: 2868
         background_offset:
           left: 500
+        stamps: []
       - source: screenshots/sportfiskarna/IMG_3775.PNG
         output: 04_leaderboard.png
         phone: iPhone_Plain_0
@@ -841,6 +908,7 @@ brands:
           resize:
             width: 1320
             height: 2868
+        stamps: []
       - source: screenshots/sportfiskarna/IMG_3776.PNG
         output: 05_reports.png
         phone: iPhone_Plain_1
@@ -871,6 +939,7 @@ brands:
             height: 2868
         background_offset:
           left: 500
+        stamps: []
       - source: screenshots/sportfiskarna/IMG_3779.PNG
         output: 06_report_catch.png
         phone: iPhone_Plain_2
@@ -902,6 +971,7 @@ brands:
         background_offset:
           left: 500
       # ----- Android -----
+        stamps: []
       - source: screenshots/sportfiskarna/IMG_3734.PNG
         output: android_01_login.png
         phone: Android_Plain_0
@@ -915,7 +985,7 @@ brands:
             shadow_color: '#000000'
             shadow_offset: [10, 10]
             shadow_blur: 2
-          - text: with your tournament code
+          - text: with your code
             position: [2484, 504]
             anchor: ma
             font_size: 240
@@ -930,6 +1000,7 @@ brands:
           resize:
             width: 1320
             height: 2868
+        stamps: []
       - source: screenshots/sportfiskarna/IMG_3773.PNG
         output: android_02_info.png
         phone: Android_Plain_1
@@ -960,6 +1031,7 @@ brands:
             height: 2868
         background_offset:
           left: 500
+        stamps: []
       - source: screenshots/sportfiskarna/IMG_3774.PNG
         output: android_03_rules.png
         phone: Android_Plain_2
@@ -990,6 +1062,7 @@ brands:
             height: 2868
         background_offset:
           left: 500
+        stamps: []
       - source: screenshots/sportfiskarna/IMG_3775.PNG
         output: android_04_leaderboard.png
         phone: Android_Plain_0
@@ -1018,6 +1091,7 @@ brands:
           resize:
             width: 1320
             height: 2868
+        stamps: []
       - source: screenshots/sportfiskarna/IMG_3776.PNG
         output: android_05_reports.png
         phone: Android_Plain_1
@@ -1048,6 +1122,7 @@ brands:
             height: 2868
         background_offset:
           left: 500
+        stamps: []
       - source: screenshots/sportfiskarna/IMG_3779.PNG
         output: android_06_report_catch.png
         phone: Android_Plain_2
@@ -1078,3 +1153,4 @@ brands:
             height: 2868
         background_offset:
           left: 500
+        stamps: []
