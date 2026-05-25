@@ -146,6 +146,8 @@ phones:
 
   "1-iPhone":
     base_image: phones/1-iPhone.png   # 4800 x 3495
+    platform: ios
+    form: phone
     screen_corners:
       top_left:
         - 1709
@@ -162,6 +164,8 @@ phones:
 
   "1-Samsung":
     base_image: phones/1-Samsung.png  # 7680 x 5120
+    platform: android
+    form: phone
     screen_corners:
       top_left:
         - 2889
@@ -178,6 +182,8 @@ phones:
 
   "1-Smartphone":
     base_image: phones/1-Smartphone.png  # 4800 x 3427
+    platform: android
+    form: phone
     screen_corners:
       top_left:
         - 1988
@@ -196,6 +202,8 @@ phones:
   # open each in the Phone-corners tab and refine.
   Android_Plain_0:
     base_image: phones/Android_Plain_0.png   # 5016 x 5016 (square)
+    platform: android
+    form: phone
     screen_corners:
       top_left:
         - 1590
@@ -212,6 +220,8 @@ phones:
 
   Android_Plain_1:
     base_image: phones/Android_Plain_1.png   # 4344 x 5792
+    platform: android
+    form: phone
     screen_corners:
       top_left:
         - 1313
@@ -228,6 +238,8 @@ phones:
 
   Android_Plain_2:
     base_image: phones/Android_Plain_2.png   # 4344 x 5792
+    platform: android
+    form: phone
     screen_corners:
       top_left:
         - 1321
@@ -245,6 +257,8 @@ phones:
 
   iPhone_Plain_0:
     base_image: phones/iPhone_Plain_0.png    # 5016 x 5016 (square)
+    platform: ios
+    form: phone
     screen_corners:
       top_left:
         - 1486
@@ -261,6 +275,8 @@ phones:
     corner_radius: 256
   iPhone_Plain_1:
     base_image: phones/iPhone_Plain_1.png    # 4488 x 5608
+    platform: ios
+    form: phone
     screen_corners:
       top_left:
         - 1279
@@ -278,6 +294,8 @@ phones:
 
   iPhone_Plain_2:
     base_image: phones/iPhone_Plain_2.png    # 4488 x 5608
+    platform: ios
+    form: phone
     screen_corners:
       top_left:
         - 1514
@@ -295,6 +313,8 @@ phones:
 
   ipad1:
     base_image: phones/ipad1.png             # 4340 x 5800
+    platform: ios
+    form: tablet
     screen_corners:
       top_left:
         - 628
@@ -311,6 +331,8 @@ phones:
 
   ipad2:
     base_image: phones/ipad2.png             # 4340 x 5800
+    platform: ios
+    form: tablet
     screen_corners:
       top_left:
         - 758
@@ -327,6 +349,8 @@ phones:
 
   ipad3:
     base_image: phones/ipad3.png             # 4340 x 5800
+    platform: ios
+    form: tablet
     screen_corners:
       top_left: [0, 0]
       top_right: [0, 0]
@@ -335,6 +359,8 @@ phones:
 
   tablet1:
     base_image: phones/tablet1.png           # 3474 x 5108
+    platform: android
+    form: tablet
     screen_corners:
       top_left:
         - 595
@@ -351,6 +377,8 @@ phones:
 
   tablet2:
     base_image: phones/tablet2.png           # 3968 x 6344
+    platform: android
+    form: tablet
     screen_corners:
       top_left: [0, 0]
       top_right: [0, 0]
@@ -778,6 +806,150 @@ brands:
             height: 2868
         background_offset:
           left: 1000
+      # ----- iPad -----
+      - source: screenshots/fishy/Simulator Screenshot - iPad Pro 12.9 6th gen (iOS 26) - 2026-05-15 at 17.21.26.png
+        output: ipad_01_tournaments.png
+        phone: ipad2
+        phone_padding:
+          top: 640
+          left: 80
+          right: 80
+        labels:
+          - text: Fishy Live
+            position: [2250, 280]
+            anchor: ma
+            font_size: 475
+            color: FFE715
+            bold: true
+            shadow_color: '000000'
+            shadow_offset: [12, 12]
+            shadow_blur: 3
+        stamps:
+          - source: logos/Fishy.Fish.png
+            position: [3100, 4810]
+            scale: 0.2
+            opacity: 0.5
+        post_process:
+          crop:
+            box:
+              - 220
+              - 0
+              - 4319
+              - 5771
+          resize:
+            width: 2048
+            height: 2732
+      - source: screenshots/fishy/Simulator Screenshot - iPad Pro 12.9 6th gen (iOS 26) - 2026-05-15 at 17.21.45.png
+        output: ipad_02_live.png
+        phone: ipad1
+        phone_padding:
+          top: 640
+          left: 80
+          right: 80
+        labels:
+          - text: Arrange and participate in
+            position: [2250, 240]
+            anchor: ma
+            font_size: 220
+            color: FFE715
+            bold: true
+            shadow_color: '#000000'
+            shadow_offset: [10, 10]
+            shadow_blur: 2
+          - text: Fishing Tournaments
+            position: [2250, 550]
+            anchor: ma
+            font_size: 270
+            color: FEE715
+            bold: true
+            shadow_color: '000000'
+            shadow_offset: [10, 10]
+            shadow_blur: 3
+        stamps:
+          - source: logos/Fishy.Fish.png
+            position: [3220, 4990]
+            scale: 0.2
+            opacity: 0.5
+        post_process:
+          crop:
+            box: [0, 0, 4500, 6000]
+          resize:
+            width: 2048
+            height: 2732
+      - source: screenshots/fishy/Simulator Screenshot - iPad Pro 12.9 6th gen (iOS 26) - 2026-05-15 at 17.21.52.png
+        output: ipad_03_leaderboards.png
+        phone: ipad1
+        phone_padding:
+          top: 640
+          left: 80
+          right: 80
+        labels:
+          - text: Updated in real time
+            position: [2250, 240]
+            anchor: ma
+            font_size: 220
+            color: FFE715
+            bold: true
+            shadow_color: '#000000'
+            shadow_offset: [10, 10]
+            shadow_blur: 2
+          - text: Live Leaderboards
+            position: [2250, 550]
+            anchor: ma
+            font_size: 270
+            color: FEE715
+            bold: true
+            shadow_color: '000000'
+            shadow_offset: [10, 10]
+            shadow_blur: 3
+        stamps:
+          - source: logos/Fishy.Fish.png
+            position: [3220, 4990]
+            scale: 0.2
+            opacity: 0.5
+        post_process:
+          crop:
+            box: [0, 0, 4500, 6000]
+          resize:
+            width: 2048
+            height: 2732
+      - source: screenshots/fishy/Simulator Screenshot - iPad Pro 12.9 6th gen (iOS 26) - 2026-05-15 at 17.21.57.png
+        output: ipad_04_catches.png
+        phone: ipad1
+        phone_padding:
+          top: 640
+          left: 80
+          right: 80
+        labels:
+          - text: Syncs when network is available
+            position: [2250, 240]
+            anchor: ma
+            font_size: 170
+            color: FFE715
+            bold: true
+            shadow_color: '#000000'
+            shadow_offset: [10, 10]
+            shadow_blur: 2
+          - text: Report your Catches
+            position: [2250, 550]
+            anchor: ma
+            font_size: 270
+            color: FEE715
+            bold: true
+            shadow_color: '000000'
+            shadow_offset: [10, 10]
+            shadow_blur: 3
+        stamps:
+          - source: logos/Fishy.Fish.png
+            position: [3220, 4990]
+            scale: 0.2
+            opacity: 0.5
+        post_process:
+          crop:
+            box: [0, 0, 4500, 6000]
+          resize:
+            width: 2048
+            height: 2732
     background_image: backgrounds/gray_waves.png
     background_scale: 1.2
     phone_padding:
@@ -1153,4 +1325,141 @@ brands:
             height: 2868
         background_offset:
           left: 500
+        stamps: []
+      # ----- iPad -----
+      - source: screenshots/sportfiskarna/Simulator Screenshot - iPad Pro 12.9 6th gen (iOS 26) - 2026-05-15 at 
+          19.32.03.png
+        output: ipad_01_login.png
+        phone: ipad2
+        phone_padding:
+          top: 640
+          left: 80
+          right: 80
+        labels:
+          - text: Log in
+            position: [2250, 240]
+            anchor: ma
+            font_size: 220
+            color: '#009fda'
+            bold: true
+            shadow_color: '#000000'
+            shadow_offset: [10, 10]
+            shadow_blur: 2
+          - text: with your code
+            position: [2250, 550]
+            anchor: ma
+            font_size: 270
+            color: '#009fda'
+            bold: true
+            shadow_color: '000000'
+            shadow_offset: [10, 10]
+            shadow_blur: 3
+        post_process:
+          crop:
+            box: [0, 0, 4500, 6000]
+          resize:
+            width: 2048
+            height: 2732
+        stamps: []
+      - source: screenshots/sportfiskarna/Simulator Screenshot - iPad Pro 12.9 6th gen (iOS 26) - 2026-05-15 at 
+          19.32.20.png
+        output: ipad_02_info.png
+        phone: ipad1
+        phone_padding:
+          top: 640
+          left: 80
+          right: 80
+        labels:
+          - text: All tournament info
+            position: [2250, 240]
+            anchor: ma
+            font_size: 220
+            color: '#009fda'
+            bold: true
+            shadow_color: '#000000'
+            shadow_offset: [10, 10]
+            shadow_blur: 2
+          - text: in one place
+            position: [2250, 550]
+            anchor: ma
+            font_size: 270
+            color: '#009fda'
+            bold: true
+            shadow_color: '000000'
+            shadow_offset: [10, 10]
+            shadow_blur: 3
+        post_process:
+          crop:
+            box: [0, 0, 4500, 6000]
+          resize:
+            width: 2048
+            height: 2732
+        stamps: []
+      - source: screenshots/sportfiskarna/Simulator Screenshot - iPad Pro 12.9 6th gen (iOS 26) - 2026-05-15 at 
+          19.32.28.png
+        output: ipad_03_leaderboard.png
+        phone: ipad1
+        phone_padding:
+          top: 640
+          left: 80
+          right: 80
+        labels:
+          - text: Follow the leaderboard
+            position: [2250, 240]
+            anchor: ma
+            font_size: 220
+            color: '#009fda'
+            bold: true
+            shadow_color: '#000000'
+            shadow_offset: [10, 10]
+            shadow_blur: 2
+          - text: in real time
+            position: [2250, 550]
+            anchor: ma
+            font_size: 270
+            color: '#009fda'
+            bold: true
+            shadow_color: '000000'
+            shadow_offset: [10, 10]
+            shadow_blur: 3
+        post_process:
+          crop:
+            box: [0, 0, 4500, 6000]
+          resize:
+            width: 2048
+            height: 2732
+        stamps: []
+      - source: screenshots/sportfiskarna/Simulator Screenshot - iPad Pro 12.9 6th gen (iOS 26) - 2026-05-15 at 
+          19.32.34.png
+        output: ipad_04_reports.png
+        phone: ipad1
+        phone_padding:
+          top: 640
+          left: 80
+          right: 80
+        labels:
+          - text: Keep track
+            position: [2250, 240]
+            anchor: ma
+            font_size: 220
+            color: '#009fda'
+            bold: true
+            shadow_color: '#000000'
+            shadow_offset: [10, 10]
+            shadow_blur: 2
+          - text: of your points
+            position: [2250, 550]
+            anchor: ma
+            font_size: 270
+            color: '#009fda'
+            bold: true
+            shadow_color: '000000'
+            shadow_offset: [10, 10]
+            shadow_blur: 3
+        post_process:
+          crop:
+            box: [0, 0, 4500, 6000]
+          resize:
+            width: 2048
+            height: 2732
         stamps: []

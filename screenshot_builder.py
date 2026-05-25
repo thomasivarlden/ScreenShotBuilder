@@ -44,6 +44,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Translations YAML file (default: translations.yaml alongside --config, if present)",
     )
     p.add_argument(
+        "--no-clean",
+        dest="clean",
+        action="store_false",
+        help="Skip the transparent 'Clean' variants (phone + screenshot, no bg/labels/stamps). On by default.",
+    )
+    p.set_defaults(clean=True)
+    p.add_argument(
         "-v", "--verbose",
         action="store_true",
         help="Verbose (DEBUG) logging",
@@ -92,7 +99,7 @@ def main(argv: list[str] | None = None) -> int:
     dist_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        report = run_build(config, assets_dir, dist_dir, log, translations=translations)
+        report = run_build(config, assets_dir, dist_dir, log, translations=translations, clean=args.clean)
     except Exception as exc:  # noqa: BLE001
         log.error(f"Fatal: {exc}")
         return 1

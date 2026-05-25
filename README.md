@@ -97,8 +97,18 @@ assets/                   inputs — Git submodule pointing at the private
   logos/<brand>/          stamp images
   fonts/                  optional custom .ttf/.otf
 dist/                     outputs (gitignored)
+  index.html              static image browser of everything in dist/
   <BrandName>/            one subfolder per brand
+    <os>/<form>/<lang>/   e.g. ios/phone/en/ — one upload-ready set per folder
+    Clean/<os>/<form>/<lang>/   transparent phone-only twins (suffix _Clean)
 ```
+
+Outputs are grouped by **device class and language** so each leaf folder maps
+to one App Store / Play Console upload slot: `os` is `ios`/`android` (falling
+back to `other`), `form` is `phone`/`tablet`. The bucket is taken from each
+phone's `platform:`/`form:` keys, falling back to sniffing the phone name.
+A transparent **Clean** variant (phone + screenshot only, no background, labels
+or stamps) is rendered for every output by default; disable with `--no-clean`.
 
 The subfolder layout under `assets/` is just a recommended convention — any
 path that resolves under `assets/` works. Reference paths in the YAML
@@ -157,7 +167,9 @@ can't render anything that references missing files.
 ./process.sh --version
 ```
 
-Outputs land in `dist/<BrandName>/<output>.png`.
+Outputs land in `dist/<BrandName>/<os>/<form>/<lang>/<NN_name>.png`, with
+transparent twins in `dist/<BrandName>/Clean/...` and a browsable
+`dist/index.html` gallery.
 
 ## CLI
 

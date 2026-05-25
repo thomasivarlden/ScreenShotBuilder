@@ -10,6 +10,10 @@ class ConfigError(Exception):
 
 CORNER_KEYS = ("top_left", "top_right", "bottom_right", "bottom_left")
 
+# Optional per-phone device class. Drives the dist/<brand>/<os>/<form>/ folders.
+VALID_PLATFORM = ("ios", "android")
+VALID_FORM = ("phone", "tablet")
+
 # YAML keys whose string values are asset-relative paths. Normalized at load
 # time so configs authored on Windows (with backslashes) resolve on POSIX.
 _PATH_KEYS = frozenset(
@@ -58,6 +62,14 @@ def _validate_phone(name: str, phone: Dict[str, Any]) -> None:
         pt = corners[c]
         if not (isinstance(pt, (list, tuple)) and len(pt) == 2):
             raise ConfigError(f"Phone '{name}' corner '{c}' must be [x, y]")
+    if "platform" in phone and str(phone["platform"]).lower() not in VALID_PLATFORM:
+        raise ConfigError(
+            f"Phone '{name}' platform must be one of {VALID_PLATFORM}, got '{phone['platform']}'"
+        )
+    if "form" in phone and str(phone["form"]).lower() not in VALID_FORM:
+        raise ConfigError(
+            f"Phone '{name}' form must be one of {VALID_FORM}, got '{phone['form']}'"
+        )
 
 
 def validate_phones(phones: Dict[str, Any]) -> None:

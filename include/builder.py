@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .compositor import build_composite
+from .gallery import write_gallery
 from .config_loader import (
     resolve_brand_phones,
     resolve_shot_phone,
@@ -77,33 +78,56 @@ def _labels_slug(shot_cfg: Dict[str, Any], max_len: int = 32) -> str:
     return slug[:max_len]
 
 
-def _platform_tag(phone_name: str) -> str:
-    """Derive a short platform label from a phone name."""
-    n = phone_name.lower()
-    if "iphone" in n:
-        return "iOS"
-    if "android" in n or "samsung" in n:
-        return "Android"
-    return phone_name  # pass-through for generic/custom phone names
+_VALID_OS = frozenset({"ios", "android"})
+_VALID_FORM = frozenset({"phone", "tablet"})
+
+# Leading platform/order tokens the author may have baked into `output:` names
+# (e.g. "android_03_login"). They are now expressed as folders, so strip them.
+_PLATFORM_PREFIX = re.compile(r"^(android|ios|iphone|ipad|tablet)[_-]", re.I)
+_ORDER_PREFIX = re.compile(r"^(\d+)[_-](.*)$")
 
 
-def _output_filename(
-    shot_cfg: Dict[str, Any],
-    phone_name: str,
-    lang_code: str,
-    multilingual: bool,
-) -> str:
+def _device_bucket(phone_name: str, phone_cfg: Dict[str, Any]) -> tuple[str, str]:
+    """Return (os, form) folders for a phone.
+
+    Prefers the phone's declared `platform`/`form` (config intent); falls back
+    to sniffing the phone name so undeclared/legacy phones still route somewhere.
+    """
+    os_ = str(phone_cfg.get("platform", "")).lower()
+    form = str(phone_cfg.get("form", "")).lower()
+    n = (phone_name or "").lower()
+    if os_ not in _VALID_OS:
+        if "iphone" in n or "ipad" in n:
+            os_ = "ios"
+        elif "android" in n or "samsung" in n:
+            os_ = "android"
+        else:
+            os_ = "other"
+    if form not in _VALID_FORM:
+        form = "tablet" if ("ipad" in n or "tablet" in n) else "phone"
+    return os_, form
+
+
+def _output_filename(shot_cfg: Dict[str, Any], suffix: str = "") -> str:
+    """Clean, ordered filename for the leaf folder.
+
+    Language and device are now folders, so the name carries only the order
+    prefix (from `output:`) and a descriptive slug. Order/wording come from the
+    config (author intent); the code just strips now-redundant platform tokens.
+    `suffix` is appended before the extension (e.g. "_Clean").
+    """
+    raw = shot_cfg.get("output") or (Path(shot_cfg["source"]).stem + ".png")
+    stem = raw[:-4] if raw.lower().endswith(".png") else raw
+    stem = _PLATFORM_PREFIX.sub("", stem)
+    order, rest = "", stem
+    m = _ORDER_PREFIX.match(stem)
+    if m:
+        order, rest = m.group(1), m.group(2)
+
     slug = _labels_slug(shot_cfg)
-    if slug:
-        stem = slug
-    else:
-        raw = shot_cfg.get("output") or Path(shot_cfg["source"]).stem + ".png"
-        if not raw.lower().endswith(".png"):
-            raw += ".png"
-        stem = raw[:-4]
-    prefix = f"{lang_code}__" if multilingual else ""
-    platform = f"__{_platform_tag(phone_name)}" if phone_name else ""
-    return f"{prefix}{stem}{platform}.png" if (prefix or platform) else f"{stem}.png"
+    name = slug or rest or Path(shot_cfg["source"]).stem
+    stem = f"{order}_{name}" if order else name
+    return f"{stem}{suffix}.png"
 
 
 def print_summary(report: BuildReport) -> None:
@@ -147,12 +171,91 @@ def print_summary(report: BuildReport) -> None:
     sys.stdout.flush()
 
 
+def _emit(
+    *,
+    merged_brand: Dict[str, Any],
+    shot: Dict[str, Any],
+    assets_dir: Path,
+    out_path: Path,
+    brand_out: Path,
+    brand_name: str,
+    phone_name: str,
+    lang_code: str,
+    clean: bool,
+    report: BuildReport,
+    log: Logger,
+    step_no: int,
+    total: int,
+) -> None:
+    """Render one variant (decorated or clean) to out_path and record the result."""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    rel = str(out_path.relative_to(brand_out))
+    tag = f"[{lang_code}] {brand_name} [{phone_name}] :: {rel}" if phone_name \
+        else f"[{lang_code}] {brand_name} :: {rel}"
+    log.step(step_no, total, tag)
+    t0 = time.time()
+    try:
+        image = build_composite(merged_brand, shot, assets_dir, clean=clean)
+        image.save(out_path, format="PNG", optimize=True)
+        report.succeeded.append(
+            ShotResult(
+                brand=brand_name, phone=phone_name, name=rel,
+                path=out_path, width=image.size[0], height=image.size[1],
+                bytes=out_path.stat().st_size, seconds=time.time() - t0,
+            )
+        )
+        log.debug(f"  wrote {out_path} ({image.size[0]}x{image.size[1]})")
+    except Exception as exc:  # noqa: BLE001
+        log.error(f"Failed: [{lang_code}] {brand_name} / {rel}: {exc}")
+        report.failed.append({"brand": brand_name, "name": rel, "error": str(exc)})
+
+
+def _emit_shot(
+    *,
+    merged_brand: Dict[str, Any],
+    shot: Dict[str, Any],
+    assets_dir: Path,
+    brand_out: Path,
+    brand_name: str,
+    phone_name: str,
+    phone_cfg: Dict[str, Any],
+    lang_code: str,
+    clean: bool,
+    report: BuildReport,
+    log: Logger,
+    counter: int,
+    total: int,
+) -> int:
+    """Emit the decorated output plus (optionally) its clean twin. Returns new counter."""
+    os_, form = _device_bucket(phone_name, phone_cfg)
+    counter += 1
+    _emit(
+        merged_brand=merged_brand, shot=shot, assets_dir=assets_dir,
+        out_path=brand_out / os_ / form / lang_code / _output_filename(shot),
+        brand_out=brand_out, brand_name=brand_name, phone_name=phone_name,
+        lang_code=lang_code, clean=False, report=report, log=log,
+        step_no=counter, total=total,
+    )
+    if clean:
+        counter += 1
+        _emit(
+            merged_brand=merged_brand, shot=shot, assets_dir=assets_dir,
+            out_path=brand_out / "Clean" / os_ / form / lang_code
+            / _output_filename(shot, suffix="_Clean"),
+            brand_out=brand_out, brand_name=brand_name, phone_name=phone_name,
+            lang_code=lang_code, clean=True, report=report, log=log,
+            step_no=counter, total=total,
+        )
+    return counter
+
+
 def run_build(
     config: Dict[str, Any],
     assets_dir: Path,
     dist_dir: Path,
     log: Logger,
     translations: Optional[Dict[str, Any]] = None,
+    clean: bool = True,
 ) -> BuildReport:
     """Build every screenshot for every brand × phone × language. Returns a BuildReport."""
     brands = config["brands"]
@@ -168,7 +271,6 @@ def run_build(
         langs = [{"code": "en", "name": "English", "enabled": True}]
         strings = {}
         settings = {}
-    multilingual = len(langs) > 1
 
     # Pre-resolve so we can show an accurate plan and fail fast on bad refs.
     resolved: Dict[str, List[tuple[str, Dict[str, Any]]]] = {}
@@ -189,10 +291,12 @@ def run_build(
             resolved[brand_name] = phone_list
             shots_per_brand[brand_name] = len(phone_list) * len(shots)
 
-    total_shots = sum(shots_per_brand.values()) * len(langs)
+    variants = 2 if clean else 1
+    total_shots = sum(shots_per_brand.values()) * len(langs) * variants
     log.info(
         f"Planning {total_shots} image(s) across {len(brands)} brand(s), "
         f"{len(phones)} registered phone(s), {len(langs)} language(s)"
+        + (" — incl. Clean variants" if clean else "")
     )
 
     report = BuildReport(dist_dir=dist_dir, started=time.time())
@@ -208,34 +312,17 @@ def run_build(
             if per_output_mode[brand_name]:
                 log.info(f"[{lang_code}] Brand: {brand_name}  ->  {brand_out}  ({len(shots)} output(s))")
                 for shot_cfg in shots:
-                    counter += 1
                     phone_name, phone_cfg = resolve_shot_phone(
                         brand_name, brand_cfg, shot_cfg, phones,
                     )
                     merged_brand = {**brand_cfg, **phone_cfg}
                     translated_shot = apply_translations(shot_cfg, lang_code, strings, settings)
-                    out_name = _output_filename(shot_cfg, phone_name, lang_code, multilingual)
-                    out_path = brand_out / out_name
-                    tag = f"[{lang_code}] {brand_name} [{phone_name}] :: {out_name}" if phone_name \
-                        else f"[{lang_code}] {brand_name} :: {out_name}"
-                    log.step(counter, total_shots, tag)
-                    t0 = time.time()
-                    try:
-                        image = build_composite(merged_brand, translated_shot, assets_dir)
-                        image.save(out_path, format="PNG", optimize=True)
-                        report.succeeded.append(
-                            ShotResult(
-                                brand=brand_name, phone=phone_name, name=out_name,
-                                path=out_path, width=image.size[0], height=image.size[1],
-                                bytes=out_path.stat().st_size, seconds=time.time() - t0,
-                            )
-                        )
-                        log.debug(f"  wrote {out_path} ({image.size[0]}x{image.size[1]})")
-                    except Exception as exc:  # noqa: BLE001
-                        log.error(f"Failed: [{lang_code}] {brand_name} / {out_name}: {exc}")
-                        report.failed.append(
-                            {"brand": brand_name, "name": out_name, "error": str(exc)}
-                        )
+                    counter = _emit_shot(
+                        merged_brand=merged_brand, shot=translated_shot, assets_dir=assets_dir,
+                        brand_out=brand_out, brand_name=brand_name, phone_name=phone_name,
+                        phone_cfg=phone_cfg, lang_code=lang_code, clean=clean,
+                        report=report, log=log, counter=counter, total=total_shots,
+                    )
                 continue
 
             # Legacy: brand × phone-list matrix.
@@ -248,30 +335,14 @@ def run_build(
             for phone_name, phone_cfg in phone_list:
                 merged_brand = {**brand_cfg, **phone_cfg}
                 for shot_cfg in shots:
-                    counter += 1
                     translated_shot = apply_translations(shot_cfg, lang_code, strings, settings)
-                    out_name = _output_filename(shot_cfg, phone_name, lang_code, multilingual)
-                    out_path = brand_out / out_name
-                    tag = f"[{lang_code}] {brand_name} [{phone_name}] :: {out_name}" if phone_name \
-                        else f"[{lang_code}] {brand_name} :: {out_name}"
-                    log.step(counter, total_shots, tag)
-                    t0 = time.time()
-                    try:
-                        image = build_composite(merged_brand, translated_shot, assets_dir)
-                        image.save(out_path, format="PNG", optimize=True)
-                        report.succeeded.append(
-                            ShotResult(
-                                brand=brand_name, phone=phone_name, name=out_name,
-                                path=out_path, width=image.size[0], height=image.size[1],
-                                bytes=out_path.stat().st_size, seconds=time.time() - t0,
-                            )
-                        )
-                        log.debug(f"  wrote {out_path} ({image.size[0]}x{image.size[1]})")
-                    except Exception as exc:  # noqa: BLE001
-                        log.error(f"Failed: [{lang_code}] {brand_name} / {out_name}: {exc}")
-                        report.failed.append(
-                            {"brand": brand_name, "name": out_name, "error": str(exc)}
-                        )
+                    counter = _emit_shot(
+                        merged_brand=merged_brand, shot=translated_shot, assets_dir=assets_dir,
+                        brand_out=brand_out, brand_name=brand_name, phone_name=phone_name,
+                        phone_cfg=phone_cfg, lang_code=lang_code, clean=clean,
+                        report=report, log=log, counter=counter, total=total_shots,
+                    )
 
     report.finished = time.time()
+    write_gallery(dist_dir, report)
     return report

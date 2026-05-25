@@ -259,14 +259,24 @@ def build_composite(
     brand_cfg: Dict[str, Any],
     shot_cfg: Dict[str, Any],
     assets_dir: Path,
+    clean: bool = False,
 ) -> Image.Image:
-    """Compose a single screenshot output and return an RGBA image."""
+    """Compose a single screenshot output and return an RGBA image.
+
+    When `clean` is True, render only the phone/tablet with the warped
+    screenshot: transparent background (no background_color / background_image)
+    and no labels or stamps. Padding, crop/resize and output_size still apply so
+    the clean image stays geometrically aligned with the decorated one.
+    """
     base_path = assets_dir / brand_cfg["base_image"]
     if not base_path.is_file():
         raise FileNotFoundError(f"Base image not found: {base_path}")
     base = Image.open(base_path).convert("RGBA")
 
-    pad = brand_cfg.get("phone_padding") or {}
+    # Shot-level phone_padding overrides brand-level (mirrors post_process).
+    pad = shot_cfg.get("phone_padding")
+    if pad is None:
+        pad = brand_cfg.get("phone_padding") or {}
     pad_t = max(0, int(pad.get("top") or 0)) if isinstance(pad, dict) else 0
     pad_r = max(0, int(pad.get("right") or 0)) if isinstance(pad, dict) else 0
     pad_b = max(0, int(pad.get("bottom") or 0)) if isinstance(pad, dict) else 0
@@ -274,10 +284,10 @@ def build_composite(
     canvas_w = base.width + pad_l + pad_r
     canvas_h = base.height + pad_t + pad_b
 
-    bg_color = brand_cfg.get("background_color", [0, 0, 0, 0])
+    bg_color = [0, 0, 0, 0] if clean else brand_cfg.get("background_color", [0, 0, 0, 0])
     canvas = Image.new("RGBA", (canvas_w, canvas_h), tuple(bg_color))
 
-    bg_image_rel = brand_cfg.get("background_image")
+    bg_image_rel = None if clean else brand_cfg.get("background_image")
     if bg_image_rel:
         bg_path = assets_dir / bg_image_rel
         if not bg_path.is_file():
@@ -349,11 +359,13 @@ def build_composite(
 
     # Labels and stamps are drawn on the full padded canvas so that their
     # x/y coordinates match what the preview coordinate readout shows.
-    for label in shot_cfg.get("labels", []) or []:
-        _draw_label(canvas, label, assets_dir, viewport_x=viewport_x)
+    # Clean renders skip both — phone + screenshot only.
+    if not clean:
+        for label in shot_cfg.get("labels", []) or []:
+            _draw_label(canvas, label, assets_dir, viewport_x=viewport_x)
 
-    for stamp_cfg in shot_cfg.get("stamps", []) or []:
-        _apply_stamp(canvas, stamp_cfg, assets_dir)
+        for stamp_cfg in shot_cfg.get("stamps", []) or []:
+            _apply_stamp(canvas, stamp_cfg, assets_dir)
 
     canvas = apply_post_process(canvas, pp_cfg)
 
